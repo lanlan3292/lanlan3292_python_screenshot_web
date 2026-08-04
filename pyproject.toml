@@ -1,6 +1,6 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.build_meta"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "lanlan3292_python_screenshot_web"
@@ -16,4 +16,4 @@ dependencies = [
 ]
 
 [project.urls]
-Home = "https://github.com/lanlan3292/python_screenshot_web_firefox"
+Home = "https://github.com/lanlan3292/lanlan3292_python_screenshot_web"
