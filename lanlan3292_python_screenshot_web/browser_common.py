@@ -1,11 +1,12 @@
 # browser_common.py
 from __future__ import annotations
 
+import inspect
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
-from datetime import datetime
 
 from playwright.async_api import Page, BrowserContext
 
@@ -17,7 +18,38 @@ SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_SCHEMES = {"http", "https"}
 
 
-# ---------- 辅助 ----------
+# ---------- 日志 ----------
+def log_message(msg: str) -> None:
+    """
+    自动从调用栈中识别调用者模块名（如 'chromium' 或 'firefox'），
+    并输出格式化的日志。
+    """
+    frame = inspect.currentframe()
+    # 向上查找第一个不属于 browser_common 的模块
+    caller_module = None
+    while frame:
+        mod = frame.f_globals.get("__name__")
+        if mod and mod != "browser_common" and not mod.startswith("_"):
+            caller_module = mod.split(".")[-1]  # 取最后一部分，如 'chromium'
+            break
+        frame = frame.f_back
+
+    module_name = caller_module or "unknown"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] [lanlan3292_python_screenshot_web.{module_name}] {msg}")
+
+
+# ---------- 校验 ----------
+def validate_viewport_params(width: int, height: int, device_scale_factor: float) -> None:
+    if not (640 <= width <= 4096):
+        raise ValueError(f"Width must be between 640 and 4096, got {width}")
+    if not (480 <= height <= 4096):
+        raise ValueError(f"Height must be between 480 and 4096, got {height}")
+    if not (0.1 <= device_scale_factor <= 5.0):
+        raise ValueError(f"device_scale_factor must be between 0.1 and 5.0, got {device_scale_factor}")
+
+
+# ---------- URL 处理 ----------
 def normalize_url(url: str) -> str:
     cleaned = url.strip()
     if not cleaned:
@@ -40,7 +72,7 @@ async def navigate_to_page(page: Page, url: str) -> None:
     try:
         await page.goto(normalized, wait_until="domcontentloaded", timeout=60000)
     except Exception as exc:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web] Navigation warning for {normalized}: {exc}")
+        log_message(f"Navigation warning for {normalized}: {exc}")
 
 
 async def scroll_to_trigger_lazy_loading(
@@ -49,11 +81,7 @@ async def scroll_to_trigger_lazy_loading(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
 ) -> None:
-    """
-    滚动页面以触发懒加载（仅用于 full_page=True 时）
-    """
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web] Scrolling to trigger lazy loading...")
-
+    log_message("Scrolling to trigger lazy loading...")
     scroll_height = await page.evaluate("document.body.scrollHeight")
     current_scroll = 0
     scroll_count = 0
@@ -71,27 +99,23 @@ async def scroll_to_trigger_lazy_loading(
             scroll_height = new_scroll_height
 
         if stable_count >= max_stable_before_break:
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web] Page height stable, stopping scroll.")
+            log_message("Page height stable, stopping scroll.")
             break
 
         current_scroll += viewport_height
         scroll_count += 1
 
     if scroll_count >= max_scrolls:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web] Reached max scroll limit ({max_scrolls}), stopping.")
+        log_message(f"Reached max scroll limit ({max_scrolls}), stopping.")
 
-    # 滚回顶部
     await page.evaluate("window.scrollTo(0, 0)")
     await page.wait_for_timeout(1000)
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web] Scrolling complete")
+    log_message("Scrolling complete")
 
 
 async def setup_media_blocking(context: BrowserContext, block_media: bool) -> None:
-    """
-    如果 block_media=True，则为 context 设置路由以阻止图片和媒体资源。
-    """
     if block_media:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web] Blocking image/media resources.")
+        log_message("Blocking image/media resources.")
         async def route_handler(route):
             if route.request.resource_type in {"image", "media"}:
                 await route.abort()
@@ -99,13 +123,10 @@ async def setup_media_blocking(context: BrowserContext, block_media: bool) -> No
                 await route.continue_()
         await context.route("**/*", route_handler)
     else:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web] Media blocking disabled.")
+        log_message("Media blocking disabled.")
 
 
 def generate_output_path(url: str, output_path: Path | None = None) -> Path:
-    """
-    根据 URL 生成默认截图保存路径（如果未指定）。
-    """
     if output_path is not None:
         return output_path
     normalized = normalize_url(url)
