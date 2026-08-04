@@ -36,7 +36,8 @@ pip install playwright
 playwright install firefox
 ```
 
-3. **Set the path to your Firefox cookie database** (optional, but required for cookie injection):
+3.**Set the path to your Firefox cookie database**
+(optional, but required for cookie injection):
 
 ```bash
 export FIREFOX_COOKIE_DB="/path/to/your/firefox/profile/cookies.sqlite"
@@ -148,7 +149,3 @@ You can change this by modifying the `SCREENSHOT_DIR` constant at the top of the
 - **Blank screenshot** – some pages may require additional waiting; you can add custom `page.wait_for_selector()` logic.
 
 ---
-
-## License
-
-This script is provided as‑is under the [MIT License](https://opensource.org/licenses/MIT).

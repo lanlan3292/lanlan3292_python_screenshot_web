@@ -1,0 +1,19 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.build_meta"
+
+[project]
+name = "python_screenshot_web_firefox"
+version = "0.0.8"
+description = "A Python tool and Discord Cog for capturing safe webpage screenshots using Playwright Firefox."
+readme = "README.md"
+authors = [
+    { name = "lanlan3292" }
+]
+requires-python = ">=3.8"
+dependencies = [
+    "playwright>=1.40.0",
+]
+
+[project.urls]
+Home = "https://github.com/lanlan3292/python_screenshot_web_firefox"
