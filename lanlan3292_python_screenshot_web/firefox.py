@@ -2,52 +2,25 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import sqlite3
 import tempfile
-import time
 from pathlib import Path
 from urllib.parse import urlparse
 from datetime import datetime
 
 from playwright.async_api import async_playwright
 
+from browser_common import (
+    normalize_url,
+    navigate_to_page,
+    scroll_to_trigger_lazy_loading,
+    setup_media_blocking,
+    generate_output_path,
+)
+
 # ---------- 路径配置 ----------
-ROOT = Path(__file__).resolve().parent.parent
-CONFIG_DIR = ROOT / "config"
-SCREENSHOT_DIR = ROOT / "output/lanlan3292_python_screenshot_web"
-SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-
 FIREFOX_COOKIE_DB = Path(os.getenv("FIREFOX_COOKIE_DB", "")) if os.getenv("FIREFOX_COOKIE_DB") else None
-
-ALLOWED_SCHEMES = {"http", "https"}
-
-
-# ---------- 辅助 ----------
-def normalize_url(url: str) -> str:
-    cleaned = url.strip()
-    if not cleaned:
-        raise ValueError("URL cannot be empty")
-    parsed = urlparse(cleaned)
-    if not parsed.scheme:
-        if "://" in cleaned:
-            raise ValueError("URL must include a valid scheme")
-        return f"https://{cleaned}"
-    scheme = parsed.scheme.lower()
-    if scheme not in ALLOWED_SCHEMES:
-        raise ValueError(f"Unsupported URL scheme: {scheme}")
-    if not parsed.netloc:
-        raise ValueError("URL must include a hostname")
-    return parsed.geturl()
-
-
-async def navigate_to_page(page, url: str) -> None:
-    normalized = normalize_url(url)
-    try:
-        await page.goto(normalized, wait_until="domcontentloaded", timeout=60000)
-    except Exception as exc:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Navigation warning for {normalized}: {exc}")
 
 
 # ---------- Firefox Cookie 加载（无白名单判断） ----------
@@ -86,7 +59,7 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
     temp_db_path = None
     try:
         if db_path is None:
-            temp_dir = Path(tempfile.mkdtemp(prefix="firefox-cookies-", dir=str(CONFIG_DIR)))
+            temp_dir = Path(tempfile.mkdtemp(prefix="firefox-cookies-"))
             temp_db_path = temp_dir / "cookies.sqlite"
             shutil.copy2(db_file, temp_db_path)
             db_file = temp_db_path
@@ -126,7 +99,7 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
             shutil.rmtree(temp_db_path.parent, ignore_errors=True)
 
 
-# ---------- 核心截图函数（无安全检查，Cookie 注入由参数控制） ----------
+# ---------- 核心截图函数 ----------
 async def capture_screenshot_bytes(
     url: str,
     width: int = 1400,
@@ -137,11 +110,10 @@ async def capture_screenshot_bytes(
     device_scale_factor: float = 1.0,
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
-    block_media: bool = False,               # 新增：是否阻止图片/媒体加载
+    block_media: bool = False,
 ) -> tuple[bytes, str]:
     """
-    截图并返回 (图片字节数据, 最终URL)。
-    不再进行任何安全检查（白名单、IP、Cookie 白名单等）。
+    使用 Firefox 截图并返回 (图片字节数据, 最终URL)。
     若 inject_cookies=True，则自动加载 Firefox 中匹配的 Cookie 并注入。
 
     参数:
@@ -151,10 +123,10 @@ async def capture_screenshot_bytes(
         inject_cookies: 是否注入 Cookie
         user_agent: 自定义 User-Agent，不提供则使用默认
         full_page: 是否截取整个页面（滚动截图）
-        device_scale_factor: 设备像素比（缩放），范围 0.1~5.0，默认 1.0
-        max_scrolls: 全页截图时最大滚动次数，防止无限滚动（默认15）
-        max_stable_before_break: 高度连续不变多少次后停止滚动（默认3）
-        block_media: 是否阻止图片和媒体资源加载（默认 False）
+        device_scale_factor: 设备像素比（缩放），范围 0.1~5.0
+        max_scrolls: 全页截图时最大滚动次数
+        max_stable_before_break: 高度连续不变多少次后停止滚动
+        block_media: 是否阻止图片和媒体资源加载
     """
     if not (640 <= width <= 4096):
         raise ValueError(f"Width must be between 640 and 4096, got {width}")
@@ -169,6 +141,7 @@ async def capture_screenshot_bytes(
 
     async with async_playwright() as playwright:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Launching Firefox for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
+
         browser = await playwright.firefox.launch(
             headless=True,
             firefox_user_prefs={
@@ -193,6 +166,7 @@ async def capture_screenshot_bytes(
                 "geo.provider.use_os_location": False,
             },
         )
+
         context_options = {
             "viewport": {"width": width, "height": height},
             "locale": "en-US",
@@ -204,20 +178,10 @@ async def capture_screenshot_bytes(
             context_options["user_agent"] = user_agent
 
         context = await browser.new_context(**context_options)
+
         try:
-            # ----- 新增：媒体拦截（如果启用） -----
-            if block_media:
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Blocking image/media resources (block_media=True)")
-                async def route_handler(route):
-                    # 只阻止图片和媒体资源（可根据需要增删类型）
-                    if route.request.resource_type in {"image", "media"}:
-                        await route.abort()
-                    else:
-                        await route.continue_()
-                await context.route("**/*", route_handler)
-            else:
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Media blocking disabled (block_media=False)")
-            # -----------------------------------------
+            # 媒体拦截
+            await setup_media_blocking(context, block_media)
 
             # Cookie 注入
             if inject_cookies:
@@ -261,55 +225,21 @@ async def capture_screenshot_bytes(
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Load state warning: {exc}")
             await page.wait_for_timeout(5000)
 
-            # ---------- 仅在全页截图时滚动触发懒加载（含防无限滚动） ----------
+            # 全页截图时的滚动触发懒加载
             if full_page:
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Scrolling to trigger lazy loading (full_page=True)")
+                await scroll_to_trigger_lazy_loading(
+                    page,
+                    viewport_height=height,
+                    max_scrolls=max_scrolls,
+                    max_stable_before_break=max_stable_before_break,
+                )
 
-                scroll_height = await page.evaluate("document.body.scrollHeight")
-                viewport_height = height
-                current_scroll = 0
-
-                # 使用传入的保险丝参数
-                scroll_count = 0
-                stable_count = 0
-
-                while current_scroll < scroll_height and scroll_count < max_scrolls:
-                    await page.evaluate(f"window.scrollTo(0, {current_scroll})")
-                    await page.wait_for_timeout(500)
-
-                    new_scroll_height = await page.evaluate("document.body.scrollHeight")
-                    if new_scroll_height == scroll_height:
-                        stable_count += 1
-                    else:
-                        stable_count = 0
-                        scroll_height = new_scroll_height
-
-                    if stable_count >= max_stable_before_break:
-                        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Page height stable, stopping scroll.")
-                        break
-
-                    current_scroll += viewport_height
-                    scroll_count += 1
-
-                if scroll_count >= max_scrolls:
-                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Reached max scroll limit ({max_scrolls}), stopping to avoid infinite scroll.")
-
-                # 滚回顶部，准备截图
-                await page.evaluate("window.scrollTo(0, 0)")
-                await page.wait_for_timeout(1000)
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Scrolling complete")
-            # -------------------------------------------------------------------------
-
-            # 获取最终 URL
             final_url = page.url
-
             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Capturing screenshot (full_page={full_page})")
             image_bytes = await page.screenshot(full_page=full_page)
             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Screenshot captured, size={len(image_bytes)} bytes, final_url={final_url}")
-            #debug_path = CONFIG_DIR / "debug_screenshot.png"
-            #debug_path.write_bytes(image_bytes)
-            #print(f"[DEBUG] Saved screenshot to {debug_path}")
             return image_bytes, final_url
+
         finally:
             await context.close()
             await browser.close()
@@ -324,30 +254,26 @@ async def capture_screenshot(
     device_scale_factor: float = 1.0,
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
-    block_media: bool = False,               # 新增
+    block_media: bool = False,
 ) -> tuple[Path, str]:
     """
     截图并保存到文件，返回 (保存路径, 最终URL)。
-    参数同 capture_screenshot_bytes，增加 max_scrolls 和 max_stable_before_break。
+    参数同 capture_screenshot_bytes。
     """
-    normalized = normalize_url(url)
-    parsed = urlparse(normalized)
-    host = parsed.hostname or "page"
-    slug = re.sub(r"[^a-z0-9]+", "-", host.lower()).strip("-") or "page"
-    if output_path is None:
-        file_name = f"{slug}-{int(time.time())}.png"
-        output_path = SCREENSHOT_DIR / file_name
-
+    output_path = generate_output_path(url, output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
     image_bytes, final_url = await capture_screenshot_bytes(
-        normalized,
+        url,
+        width=1400,
+        height=900,
         inject_cookies=inject_cookies,
         user_agent=user_agent,
         full_page=full_page,
         device_scale_factor=device_scale_factor,
         max_scrolls=max_scrolls,
         max_stable_before_break=max_stable_before_break,
-        block_media=block_media,          # 透传
+        block_media=block_media,
     )
     output_path.write_bytes(image_bytes)
     return output_path, final_url
