@@ -29,6 +29,12 @@ It supports optional cookie injection from a local Firefox profile, full‑page 
 
 ## Installation
 
+```bash
+pip install git+https://github.com/lanlan3292/lanlan3292_python_screenshot_web.git
+```
+
+or
+
 1. **Clone or download** this repository.
 
 2. **Install dependencies**:
@@ -55,7 +61,7 @@ On Windows, use `set` instead of `export`.
 
 ```python
 import asyncio
-from firefox import capture_screenshot, capture_screenshot_bytes
+from lanlan3292_python_screenshot_web.firefox import capture_screenshot, capture_screenshot_bytes
 
 async def main():
     # Save to default output folder (output/lanlan3292_python_screenshot_web/)
@@ -73,7 +79,7 @@ asyncio.run(main())
 
 ```python
 path, final_url = await capture_screenshot(
-    "https://my.dashboard.com",
+    "https://en.wikipedia.org/wiki/Python_(programming_language)",
     inject_cookies=True,          # load cookies from Firefox DB
     block_media=True,             # block images/videos for faster loading
     width=1920,
