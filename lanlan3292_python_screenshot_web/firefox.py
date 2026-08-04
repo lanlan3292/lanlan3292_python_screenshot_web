@@ -135,8 +135,9 @@ async def capture_screenshot_bytes(
     user_agent: str | None = None,
     full_page: bool = False,
     device_scale_factor: float = 1.0,
-    max_scrolls: int = 15,                # 新增：最大滚动次数（防无限滚动）
-    max_stable_before_break: int = 3,     # 新增：高度连续不变次数上限
+    max_scrolls: int = 15,
+    max_stable_before_break: int = 3,
+    block_media: bool = False,               # 新增：是否阻止图片/媒体加载
 ) -> tuple[bytes, str]:
     """
     截图并返回 (图片字节数据, 最终URL)。
@@ -153,6 +154,7 @@ async def capture_screenshot_bytes(
         device_scale_factor: 设备像素比（缩放），范围 0.1~5.0，默认 1.0
         max_scrolls: 全页截图时最大滚动次数，防止无限滚动（默认15）
         max_stable_before_break: 高度连续不变多少次后停止滚动（默认3）
+        block_media: 是否阻止图片和媒体资源加载（默认 False）
     """
     if not (640 <= width <= 4096):
         raise ValueError(f"Width must be between 640 and 4096, got {width}")
@@ -203,6 +205,20 @@ async def capture_screenshot_bytes(
 
         context = await browser.new_context(**context_options)
         try:
+            # ----- 新增：媒体拦截（如果启用） -----
+            if block_media:
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Blocking image/media resources (block_media=True)")
+                async def route_handler(route):
+                    # 只阻止图片和媒体资源（可根据需要增删类型）
+                    if route.request.resource_type in {"image", "media"}:
+                        await route.abort()
+                    else:
+                        await route.continue_()
+                await context.route("**/*", route_handler)
+            else:
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Media blocking disabled (block_media=False)")
+            # -----------------------------------------
+
             # Cookie 注入
             if inject_cookies:
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Cookie injection enabled for {hostname}")
@@ -308,6 +324,7 @@ async def capture_screenshot(
     device_scale_factor: float = 1.0,
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
+    block_media: bool = False,               # 新增
 ) -> tuple[Path, str]:
     """
     截图并保存到文件，返回 (保存路径, 最终URL)。
@@ -330,6 +347,7 @@ async def capture_screenshot(
         device_scale_factor=device_scale_factor,
         max_scrolls=max_scrolls,
         max_stable_before_break=max_stable_before_break,
+        block_media=block_media,          # 透传
     )
     output_path.write_bytes(image_bytes)
     return output_path, final_url
