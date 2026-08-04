@@ -16,7 +16,7 @@ from playwright.async_api import async_playwright
 # ---------- 路径配置 ----------
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
-SCREENSHOT_DIR = ROOT / "outputs/screenshots_web"
+SCREENSHOT_DIR = ROOT / "output/screenshots_web"
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 FIREFOX_COOKIE_DB = Path(os.getenv("FIREFOX_COOKIE_DB", "")) if os.getenv("FIREFOX_COOKIE_DB") else None
