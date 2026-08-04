@@ -135,6 +135,8 @@ async def capture_screenshot_bytes(
     user_agent: str | None = None,
     full_page: bool = False,
     device_scale_factor: float = 1.0,
+    max_scrolls: int = 15,                # 新增：最大滚动次数（防无限滚动）
+    max_stable_before_break: int = 3,     # 新增：高度连续不变次数上限
 ) -> tuple[bytes, str]:
     """
     截图并返回 (图片字节数据, 最终URL)。
@@ -149,6 +151,8 @@ async def capture_screenshot_bytes(
         user_agent: 自定义 User-Agent，不提供则使用默认
         full_page: 是否截取整个页面（滚动截图）
         device_scale_factor: 设备像素比（缩放），范围 0.1~5.0，默认 1.0
+        max_scrolls: 全页截图时最大滚动次数，防止无限滚动（默认15）
+        max_stable_before_break: 高度连续不变多少次后停止滚动（默认3）
     """
     if not (640 <= width <= 4096):
         raise ValueError(f"Width must be between 640 and 4096, got {width}")
@@ -241,6 +245,45 @@ async def capture_screenshot_bytes(
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Load state warning: {exc}")
             await page.wait_for_timeout(5000)
 
+            # ---------- 仅在全页截图时滚动触发懒加载（含防无限滚动） ----------
+            if full_page:
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Scrolling to trigger lazy loading (full_page=True)")
+
+                scroll_height = await page.evaluate("document.body.scrollHeight")
+                viewport_height = height
+                current_scroll = 0
+
+                # 使用传入的保险丝参数
+                scroll_count = 0
+                stable_count = 0
+
+                while current_scroll < scroll_height and scroll_count < max_scrolls:
+                    await page.evaluate(f"window.scrollTo(0, {current_scroll})")
+                    await page.wait_for_timeout(500)
+
+                    new_scroll_height = await page.evaluate("document.body.scrollHeight")
+                    if new_scroll_height == scroll_height:
+                        stable_count += 1
+                    else:
+                        stable_count = 0
+                        scroll_height = new_scroll_height
+
+                    if stable_count >= max_stable_before_break:
+                        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Page height stable, stopping scroll.")
+                        break
+
+                    current_scroll += viewport_height
+                    scroll_count += 1
+
+                if scroll_count >= max_scrolls:
+                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Reached max scroll limit ({max_scrolls}), stopping to avoid infinite scroll.")
+
+                # 滚回顶部，准备截图
+                await page.evaluate("window.scrollTo(0, 0)")
+                await page.wait_for_timeout(1000)
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Scrolling complete")
+            # -------------------------------------------------------------------------
+
             # 获取最终 URL
             final_url = page.url
 
@@ -263,10 +306,12 @@ async def capture_screenshot(
     user_agent: str | None = None,
     full_page: bool = False,
     device_scale_factor: float = 1.0,
+    max_scrolls: int = 15,
+    max_stable_before_break: int = 3,
 ) -> tuple[Path, str]:
     """
     截图并保存到文件，返回 (保存路径, 最终URL)。
-    参数同 capture_screenshot_bytes。
+    参数同 capture_screenshot_bytes，增加 max_scrolls 和 max_stable_before_break。
     """
     normalized = normalize_url(url)
     parsed = urlparse(normalized)
@@ -283,6 +328,8 @@ async def capture_screenshot(
         user_agent=user_agent,
         full_page=full_page,
         device_scale_factor=device_scale_factor,
+        max_scrolls=max_scrolls,
+        max_stable_before_break=max_stable_before_break,
     )
     output_path.write_bytes(image_bytes)
     return output_path, final_url

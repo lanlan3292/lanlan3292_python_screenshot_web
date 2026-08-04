@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lanlan3292_python_screenshot_web"
-version = "0.0.9"
+version = "0.0.10"
 description = "A Python tool and Discord Cog for capturing safe webpage screenshots using Playwright Firefox."
 readme = "README.md"
 authors = [
