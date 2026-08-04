@@ -1,4 +1,4 @@
-# screenshot_web_firefox.py
+# firefox.py
 from __future__ import annotations
 
 import os
@@ -16,7 +16,7 @@ from playwright.async_api import async_playwright
 # ---------- 路径配置 ----------
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
-SCREENSHOT_DIR = ROOT / "output/screenshots_web"
+SCREENSHOT_DIR = ROOT / "output/lanlan3292_python_screenshot_web"
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 FIREFOX_COOKIE_DB = Path(os.getenv("FIREFOX_COOKIE_DB", "")) if os.getenv("FIREFOX_COOKIE_DB") else None
@@ -47,7 +47,7 @@ async def navigate_to_page(page, url: str) -> None:
     try:
         await page.goto(normalized, wait_until="domcontentloaded", timeout=60000)
     except Exception as exc:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Navigation warning for {normalized}: {exc}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Navigation warning for {normalized}: {exc}")
 
 
 # ---------- Firefox Cookie 加载（无白名单判断） ----------
@@ -77,10 +77,10 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
     """
     db_file = db_path or FIREFOX_COOKIE_DB
     if db_file is None:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Firefox cookie DB path is not configured")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Firefox cookie DB path is not configured")
         return []
     if not db_file.exists():
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Firefox cookie DB not found: {db_file}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Firefox cookie DB not found: {db_file}")
         return []
 
     temp_db_path = None
@@ -93,7 +93,7 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
 
         cookie_hostname = _normalize_cookie_host(hostname)
         if not cookie_hostname:
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Empty cookie hostname for input: {hostname!r}")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Empty cookie hostname for input: {hostname!r}")
             return []
 
         conn = sqlite3.connect(db_file)
@@ -109,17 +109,17 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
             if _cookie_domain_matches(row["host"], cookie_hostname)
         ]
         print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Loaded {len(matched)} cookie(s) for hostname: {hostname} "
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Loaded {len(matched)} cookie(s) for hostname: {hostname} "
             f"(normalized: {cookie_hostname}) out of {len(rows)} total"
         )
         for row in matched:
             print(
-                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] cookie -> host={row['host']} name={row['name']} "
+                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] cookie -> host={row['host']} name={row['name']} "
                 f"path={row['path']} isSecure={row['isSecure']} isHttpOnly={row.get('isHttpOnly', 0)}"
             )
         return matched
     except Exception as exc:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Failed to load Firefox cookies: {exc}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Failed to load Firefox cookies: {exc}")
         return []
     finally:
         if temp_db_path and temp_db_path.exists():
@@ -162,7 +162,7 @@ async def capture_screenshot_bytes(
     hostname = parsed.hostname or ""
 
     async with async_playwright() as playwright:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Launching Firefox for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Launching Firefox for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
         browser = await playwright.firefox.launch(
             headless=True,
             firefox_user_prefs={
@@ -201,7 +201,7 @@ async def capture_screenshot_bytes(
         try:
             # Cookie 注入
             if inject_cookies:
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Cookie injection enabled for {hostname}")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Cookie injection enabled for {hostname}")
                 cookies = load_firefox_cookies(hostname)
                 if cookies:
                     cookie_payload = []
@@ -221,15 +221,15 @@ async def capture_screenshot_bytes(
                             if expiry_seconds > 0:
                                 payload["expires"] = expiry_seconds
                         cookie_payload.append(payload)
-                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Injecting {len(cookie_payload)} cookie(s)")
+                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Injecting {len(cookie_payload)} cookie(s)")
                     try:
                         await context.add_cookies(cookie_payload)
                     except Exception as exc:
-                        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Cookie injection failed: {exc}")
+                        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Cookie injection failed: {exc}")
                 else:
-                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] No cookies to inject for {hostname}")
+                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] No cookies to inject for {hostname}")
             else:
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Cookie injection skipped (inject_cookies=False)")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Cookie injection skipped (inject_cookies=False)")
 
             page = await context.new_page()
             await navigate_to_page(page, normalized)
@@ -238,15 +238,15 @@ async def capture_screenshot_bytes(
             try:
                 await page.wait_for_load_state("load", timeout=60000)
             except Exception as exc:
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Load state warning: {exc}")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Load state warning: {exc}")
             await page.wait_for_timeout(5000)
 
             # 获取最终 URL
             final_url = page.url
 
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Capturing screenshot (full_page={full_page})")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Capturing screenshot (full_page={full_page})")
             image_bytes = await page.screenshot(full_page=full_page)
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [screenshot_web_firefox] Screenshot captured, size={len(image_bytes)} bytes, final_url={final_url}")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [lanlan3292_python_screenshot_web.firefox] Screenshot captured, size={len(image_bytes)} bytes, final_url={final_url}")
             #debug_path = CONFIG_DIR / "debug_screenshot.png"
             #debug_path.write_bytes(image_bytes)
             #print(f"[DEBUG] Saved screenshot to {debug_path}")
