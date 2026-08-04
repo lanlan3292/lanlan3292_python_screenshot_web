@@ -24,19 +24,17 @@ def log_message(msg: str) -> None:
     自动从调用栈中识别调用者模块名（如 'chromium' 或 'firefox'），
     并输出格式化的日志。
     """
-    frame = inspect.currentframe()
-    # 向上查找第一个不属于 browser_common 的模块
-    caller_module = None
-    while frame:
-        mod = frame.f_globals.get("__name__")
-        if mod and mod != "browser_common" and not mod.startswith("_"):
-            caller_module = mod.split(".")[-1]  # 取最后一部分，如 'chromium'
+    import inspect
+    stack = inspect.stack()
+    caller_module = "unknown"
+    for frame_info in stack:
+        mod = frame_info.frame.f_globals.get("__name__")
+        # 跳过 browser_common 自身以及任何属于 browser_common 的内部调用
+        if mod and not (mod == "browser_common" or mod.endswith(".browser_common")):
+            caller_module = mod.split(".")[-1]
             break
-        frame = frame.f_back
-
-    module_name = caller_module or "unknown"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [lanlan3292_python_screenshot_web.{module_name}] {msg}")
+    print(f"[{timestamp}] [lanlan3292_python_screenshot_web.{caller_module}] {msg}")
 
 
 # ---------- 校验 ----------
@@ -126,12 +124,13 @@ async def setup_media_blocking(context: BrowserContext, block_media: bool) -> No
         log_message("Media blocking disabled.")
 
 
-def generate_output_path(url: str, output_path: Path | None = None) -> Path:
+def generate_output_path(url: str, output_path: Path | None = None, browser: str | None = None) -> Path:
     if output_path is not None:
         return output_path
     normalized = normalize_url(url)
     parsed = urlparse(normalized)
     host = parsed.hostname or "page"
     slug = re.sub(r"[^a-z0-9]+", "-", host.lower()).strip("-") or "page"
-    file_name = f"{slug}-{int(time.time())}.png"
+    prefix = f"{browser}" if browser else ""
+    file_name = f"{slug}-{int(time.time())}-{prefix}.png"
     return SCREENSHOT_DIR / file_name

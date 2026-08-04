@@ -11,7 +11,7 @@ from datetime import datetime
 
 from playwright.async_api import async_playwright
 
-from browser_common import (
+from .browser_common import (
     normalize_url,
     log_message,
     validate_viewport_params,
@@ -228,7 +228,7 @@ async def capture_screenshot(
     max_stable_before_break: int = 3,
     block_media: bool = False,
 ) -> tuple[Path, str]:
-    output_path = generate_output_path(url, output_path)
+    output_path = generate_output_path(url, output_path, browser="firefox")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     image_bytes, final_url = await capture_screenshot_bytes(
