@@ -69,6 +69,14 @@ async def capture_screenshot_bytes(
             await navigate_to_page(page, normalized)
             await page.wait_for_timeout(3000)
 
+            if full_page:
+                await scroll_to_trigger_lazy_loading(
+                    page,
+                    viewport_height=height,
+                    max_scrolls=max_scrolls,
+                    max_stable_before_break=max_stable_before_break,
+                )
+
             try:
                 await page.wait_for_load_state("networkidle", timeout=5000)
             except Exception:
@@ -77,14 +85,6 @@ async def capture_screenshot_bytes(
 
             logger.info("wait 10s")
             await page.wait_for_timeout(10000)
-
-            if full_page:
-                await scroll_to_trigger_lazy_loading(
-                    page,
-                    viewport_height=height,
-                    max_scrolls=max_scrolls,
-                    max_stable_before_break=max_stable_before_break,
-                )
 
             final_url = page.url
             logger.info(f"Capturing screenshot (full_page={full_page})")
