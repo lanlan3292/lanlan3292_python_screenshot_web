@@ -43,6 +43,11 @@ def _cookie_domain_matches(cookie_host: str, hostname: str) -> bool:
     return hostname == cookie_host
 
 def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dict]:
+    """
+    从 Firefox cookie 数据库加载匹配的 cookies。
+    匹配时使用原始 host（含可能的前导点），匹配成功后再剥离前导点，
+    以满足 Playwright 的 domain 规范（不能以 . 开头）。
+    """
     db_file = db_path or FIREFOX_COOKIE_DB
     if db_file is None:
         logger.info("Firefox cookie DB path is not configured")
@@ -56,7 +61,6 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
         logger.warning(f"Empty cookie hostname for input: {hostname!r}")
         return []
 
-    # 使用 TemporaryDirectory 自动清理
     with tempfile.TemporaryDirectory(prefix="firefox-cookies-") as temp_dir:
         temp_db_path = Path(temp_dir) / "cookies.sqlite"
         shutil.copy2(db_file, temp_db_path)
@@ -70,20 +74,22 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
 
             matched = []
             for row in rows:
-                host = row["host"]
-                # 移除前导点（.），满足 Playwright domain 规范
-                if host.startswith("."):
-                    host = host[1:]
-                if _cookie_domain_matches(host, cookie_hostname):
-                    # 转换为 dict，并修正 host 字段
+                raw_host = row["host"]  # 原始 host，可能以 . 开头
+                # 先用原始 host 进行匹配（泛域名匹配）
+                if _cookie_domain_matches(raw_host, cookie_hostname):
                     cookie_dict = dict(row)
-                    cookie_dict["host"] = host
+                    # 匹配成功后，剥离前导点（如果存在），供 Playwright 注入
+                    host_for_playwright = raw_host
+                    if host_for_playwright.startswith("."):
+                        host_for_playwright = host_for_playwright[1:]
+                    cookie_dict["host"] = host_for_playwright
                     matched.append(cookie_dict)
 
             logger.info(
                 f"Loaded {len(matched)} cookie(s) for hostname: {hostname} "
                 f"(normalized: {cookie_hostname}) out of {len(rows)} total"
             )
+            # 使用 debug 级别，避免日志风暴
             for row in matched:
                 logger.debug(
                     f"cookie -> host={row['host']} name={row['name']} "
@@ -164,7 +170,7 @@ async def capture_screenshot_bytes(
                         payload = {
                             "name": cookie["name"],
                             "value": cookie["value"],
-                            "domain": cookie["host"],
+                            "domain": cookie["host"],  # 已剥离前导点
                             "path": cookie["path"] or "/",
                             "secure": bool(cookie.get("isSecure", 0)),
                             "httpOnly": bool(cookie.get("isHttpOnly", 0)),
@@ -189,7 +195,7 @@ async def capture_screenshot_bytes(
             page = await context.new_page()
             await navigate_to_page(page, normalized)
 
-            # 优先等待网络空闲（networkidle），超时 5 秒则回退到 1 秒等待
+            # 优先等待网络空闲，超时 5 秒则回退到 1 秒等待
             try:
                 await page.wait_for_load_state("networkidle", timeout=5000)
             except Exception:
