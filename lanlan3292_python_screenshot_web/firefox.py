@@ -112,9 +112,10 @@ async def capture_screenshot_bytes(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
+    allow_schemes_whitelist: bool = True,  # 新增
 ) -> tuple[bytes, str]:
     validate_viewport_params(width, height, device_scale_factor)
-    normalized = normalize_url(url)
+    normalized = normalize_url(url, allow_schemes_whitelist=allow_schemes_whitelist)
     parsed = urlparse(normalized)
     hostname = parsed.hostname or ""
 
@@ -193,7 +194,7 @@ async def capture_screenshot_bytes(
                 logger.info("Cookie injection skipped (inject_cookies=False)")
 
             page = await context.new_page()
-            await navigate_to_page(page, normalized)
+            await navigate_to_page(page, normalized)  # 传入已标准化的 URL
 
             # 优先等待网络空闲，超时 5 秒则回退到 1 秒等待
             try:
@@ -231,6 +232,7 @@ async def capture_screenshot(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
+    allow_schemes_whitelist: bool = True,  # 新增
 ) -> tuple[bytes, str]:
     image_bytes, final_url = await capture_screenshot_bytes(
         url,
@@ -243,5 +245,6 @@ async def capture_screenshot(
         max_scrolls=max_scrolls,
         max_stable_before_break=max_stable_before_break,
         block_media=block_media,
+        allow_schemes_whitelist=allow_schemes_whitelist,
     )
     return image_bytes, final_url

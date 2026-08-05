@@ -19,12 +19,12 @@ def normalize_url(url: str, allow_schemes_whitelist: bool = True) -> str:
     """
     标准化 URL。
     - 若 allow_schemes_whitelist=True（默认），仅允许 http/https 方案，其他抛出 ValueError。
-    - 若 allow_schemes_whitelist=False，不进行方案白名单校验，允许任何 scheme（如 ftp, file 等）。
+    - 若 allow_schemes_whitelist=False，不进行方案白名单校验，允许任何 scheme（如 ftp, file, chrome 等）。
     无论哪种模式，都会：
       - 去除首尾空白，非空校验
       - 若无 scheme，则补全为 https://
       - 若含 '://' 但无有效 scheme，则抛错
-      - 检查 netloc 非空
+      - 检查 netloc 非空（对于 http/https），其他 scheme 仅检查 netloc 或 path 至少存在一项
     """
     cleaned = url.strip()
     if not cleaned:
@@ -37,18 +37,21 @@ def normalize_url(url: str, allow_schemes_whitelist: bool = True) -> str:
     scheme = parsed.scheme.lower()
     if allow_schemes_whitelist and scheme not in {"http", "https"}:
         raise ValueError(f"Unsupported URL scheme: {scheme}")
-    if scheme in {"http","https"} and not parsed.netloc:
+    if scheme in {"http", "https"} and not parsed.netloc:
         raise ValueError("URL must include a hostname")
     if not parsed.netloc and not parsed.path:
         raise ValueError("URL must include a hostname or path")
     return parsed.geturl()
 
 async def navigate_to_page(page: Page, url: str) -> None:
-    normalized = normalize_url(url)  # 默认启用白名单
+    """
+    直接导航到已标准化的 URL，不再重新标准化，避免白名单冲突。
+    调用者应确保传入的 URL 已通过 normalize_url 处理。
+    """
     try:
-        await page.goto(normalized, wait_until="domcontentloaded", timeout=60000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
     except Exception as exc:
-        logger.warning(f"Navigation warning for {normalized}: {exc}")
+        logger.warning(f"Navigation warning for {url}: {exc}")
 
 async def scroll_to_trigger_lazy_loading(
     page: Page,

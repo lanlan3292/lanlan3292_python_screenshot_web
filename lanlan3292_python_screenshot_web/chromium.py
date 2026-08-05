@@ -25,13 +25,14 @@ async def capture_screenshot_bytes(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
+    allow_schemes_whitelist: bool = True,  # 新增，默认保持白名单
 ) -> tuple[bytes, str]:
     """
     使用 Chromium 截图并返回 (图片字节数据, 最终URL)。
     不包含 Cookie 注入功能。
     """
     validate_viewport_params(width, height, device_scale_factor)
-    normalized = normalize_url(url)
+    normalized = normalize_url(url, allow_schemes_whitelist=allow_schemes_whitelist)
 
     async with async_playwright() as playwright:
         logger.info(f"Launching Chromium for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
@@ -44,6 +45,9 @@ async def capture_screenshot_bytes(
                 "--disable-web-security",
                 "--disable-dev-shm-usage",
                 "--no-sandbox",
+                "--enable-chrome-browser-cloud-management",
+                "--ignore-certificate-errors",
+                "--whitelisted-extension-id",
             ],
         )
 
@@ -63,7 +67,7 @@ async def capture_screenshot_bytes(
             await setup_media_blocking(context, block_media)
 
             page = await context.new_page()
-            await navigate_to_page(page, normalized)
+            await navigate_to_page(page, normalized)  # 传入已标准化的 URL
 
             # 优先等待网络空闲（networkidle），超时 5 秒则回退到 1 秒等待
             try:
@@ -100,6 +104,7 @@ async def capture_screenshot(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
+    allow_schemes_whitelist: bool = True,  # 新增
 ) -> tuple[bytes, str]:
     image_bytes, final_url = await capture_screenshot_bytes(
         url,
@@ -111,5 +116,6 @@ async def capture_screenshot(
         max_scrolls=max_scrolls,
         max_stable_before_break=max_stable_before_break,
         block_media=block_media,
+        allow_schemes_whitelist=allow_schemes_whitelist,
     )
     return image_bytes, final_url
