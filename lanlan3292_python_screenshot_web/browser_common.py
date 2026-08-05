@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # ---------- 公网 IP 掩码配置 ----------
 PUBLIC_IP_FILE = Path(tempfile.gettempdir()) / "public_ip.env"
-ENABLE_IP_MASK = False          # 日志掩码总开关（仅影响日志）
+ENABLE_IP_MASK = True          # 日志掩码总开关（仅影响日志）
 IP_MASK_MODE = 1               # 默认 DOM 掩码模式（2=仅出口 IPv4）
 
 # IPv4 和 IPv6 正则（用于模式 1）
@@ -61,7 +61,6 @@ async def mask_ip_in_page(page: Page, mode: int | None = None) -> None:
     在页面的文本节点中根据模式替换 IP。
     mode: 0=关闭, 1=替换所有 IPv4/IPv6, 2=仅替换出口 IPv4。
     若 mode 为 None，则使用全局 IP_MASK_MODE。
-    输出替换的节点数及页面文本预览（用于调试）。
     """
     if mode is None:
         mode = IP_MASK_MODE
@@ -93,7 +92,6 @@ async def mask_ip_in_page(page: Page, mode: int | None = None) -> None:
                 const ip = '{ip}';
                 const regex = new RegExp('{escaped_ip}', 'g');
                 let totalCount = 0;
-                let textPreview = '';
 
                 function processDocument(doc) {{
                     if (!doc || !doc.body) return;
@@ -106,7 +104,6 @@ async def mask_ip_in_page(page: Page, mode: int | None = None) -> None:
                     let node;
                     while (node = walker.nextNode()) {{
                         const original = node.nodeValue;
-                        textPreview += original.substring(0, 50) + ' ';
                         const replaced = original.replace(regex, '**.**.**.**');
                         if (replaced !== original) {{
                             node.nodeValue = replaced;
@@ -129,7 +126,7 @@ async def mask_ip_in_page(page: Page, mode: int | None = None) -> None:
                 }}
 
                 processDocument(document);
-                return {{ count: totalCount, preview: textPreview.slice(0, 1000) }};
+                return totalCount;
             }})();
         """
     else:  # mode == 1
@@ -138,7 +135,6 @@ async def mask_ip_in_page(page: Page, mode: int | None = None) -> None:
                 const ipv4Regex = /\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b/g;
                 const ipv6Regex = /\\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\\b|\\b(?:[0-9a-fA-F]{1,4}:){1,7}:[0-9a-fA-F]{1,4}\\b|::[0-9a-fA-F]{1,4}\\b/gi;
                 let totalCount = 0;
-                let textPreview = '';
 
                 function processDocument(doc) {
                     if (!doc || !doc.body) return;
@@ -151,7 +147,6 @@ async def mask_ip_in_page(page: Page, mode: int | None = None) -> None:
                     let node;
                     while (node = walker.nextNode()) {
                         const original = node.nodeValue;
-                        textPreview += original.substring(0, 50) + ' ';
                         let replaced = original.replace(ipv4Regex, '**.**.**.**');
                         replaced = replaced.replace(ipv6Regex, '**:**:**:**:**:**:**:**:*');
                         if (replaced !== original) {
@@ -175,19 +170,14 @@ async def mask_ip_in_page(page: Page, mode: int | None = None) -> None:
                 }
 
                 processDocument(document);
-                return { count: totalCount, preview: textPreview.slice(0, 1000) };
+                return totalCount;
             })();
         """
 
     try:
-        result = await page.evaluate(js_code)
-        count = result.get('count', 0)
-        preview = result.get('preview', '')
+        count = await page.evaluate(js_code)
         if count == 0:
-            logger.warning(
-                f"DOM IP masking applied (mode={mode}) but replaced 0 nodes. "
-                f"Page text preview (first 1000 chars): {preview}"
-            )
+            logger.warning(f"DOM IP masking applied (mode={mode}) but replaced 0 nodes.")
         else:
             logger.info(f"DOM IP masking applied (mode={mode}), replaced {count} text node(s)")
     except Exception as e:
@@ -234,7 +224,8 @@ async def scroll_to_trigger_lazy_loading(
 ) -> None:
     logger.info("Scrolling to trigger lazy loading via JS...")
     js_code = """
-        (async (viewportHeight, maxScrolls, maxStableBeforeBreak) => {
+        (async ({ viewportHeight, maxScrolls, maxStableBeforeBreak }) => {
+            // 从视口高度开始滚动，避免首次无效滚动
             let currentScroll = viewportHeight;
             let scrollCount = 0;
             let stableCount = 0;
@@ -267,9 +258,13 @@ async def scroll_to_trigger_lazy_loading(
 
             window.scrollTo(0, 0);
             await new Promise(resolve => setTimeout(resolve, 1000));
-        })(viewportHeight, maxScrolls, maxStableBeforeBreak);
+        })
     """
-    await page.evaluate(js_code, viewport_height, max_scrolls, max_stable_before_break)
+    await page.evaluate(js_code, {
+        "viewportHeight": viewport_height,
+        "maxScrolls": max_scrolls,
+        "maxStableBeforeBreak": max_stable_before_break,
+    })
     logger.info("Scrolling complete")
 
 async def setup_media_blocking(context: BrowserContext, block_media: bool) -> None:
