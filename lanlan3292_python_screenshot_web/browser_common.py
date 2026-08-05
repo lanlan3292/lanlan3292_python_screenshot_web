@@ -26,20 +26,33 @@ _IPV6_RE = re.compile(
 )
 
 def get_public_ip() -> str:
-    """获取当前公网 IP，结果缓存到临时文件。"""
-    try:
-        request = Request("https://api.ip.sb/ip", headers={"User-Agent": "curl/8.0"})
-        with urlopen(request, timeout=10) as response:
-            ip = response.read().decode("utf-8").strip()
-        PUBLIC_IP_FILE.parent.mkdir(parents=True, exist_ok=True)
-        PUBLIC_IP_FILE.write_text(ip, encoding="utf-8")
-        return ip
-    except Exception:
-        if PUBLIC_IP_FILE.exists():
-            cached = PUBLIC_IP_FILE.read_text(encoding="utf-8").strip()
-            if cached:
-                return cached
-        raise
+    ip_services = [
+        "https://checkip.amazonaws.com",
+        "https://icanhazip.com",
+        "https://api.ipify.org",
+    ]
+
+    for url in ip_services:
+        try:
+            logger.info("Fetching public IP from %s", url)
+            request = Request(url, headers={"User-Agent": "curl/8.0"})
+            with urlopen(request, timeout=10) as response:
+                ip = response.read().decode("utf-8").strip()
+
+            if ip and "." in ip:
+                PUBLIC_IP_FILE.parent.mkdir(parents=True, exist_ok=True)
+                PUBLIC_IP_FILE.write_text(ip, encoding="utf-8")
+                return ip
+
+        except Exception:
+            continue
+
+    if PUBLIC_IP_FILE.exists():
+        cached = PUBLIC_IP_FILE.read_text(encoding="utf-8").strip()
+        if cached:
+            return cached
+
+    raise RuntimeError("Unable to get public IP")
 
 def mask_ip_in_text(text: str) -> str:
     """

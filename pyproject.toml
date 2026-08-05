@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lanlan3292_python_screenshot_web"
-version = "0.0.19"
+version = "0.0.20"
 description = "A Python tool for capturing webpage screenshots using Playwright."
 readme = "README.md"
 authors = [
