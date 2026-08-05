@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # ---------- 公网 IP 掩码（内嵌） ----------
 PUBLIC_IP_FILE = Path(tempfile.gettempdir()) / "public_ip.env"
-ENABLE_IP_MASK = True  # 默认开启掩码
+ENABLE_IP_MASK = True  # 全局总开关，默认开启
 
 def get_public_ip() -> str:
     """获取当前公网 IP，结果缓存到临时文件。"""
@@ -31,7 +31,7 @@ def get_public_ip() -> str:
         raise
 
 def mask_ip_in_text(text: str, ip_address: str | None = None) -> str:
-    """如果开关开启，将文本中的公网 IP 替换为 '**.**.**.**'。"""
+    """如果全局开关开启，将文本中的公网 IP 替换为 '**.**.**.**'。"""
     if not ENABLE_IP_MASK:
         return text
     if ip_address is None:
@@ -44,7 +44,10 @@ def mask_ip_in_text(text: str, ip_address: str | None = None) -> str:
     return text.replace(ip_address, "**.**.**.**")
 
 async def mask_ip_in_page(page: Page) -> None:
-    """在页面 DOM 中将公网 IP 替换为 '**.**.**.**'。"""
+    """
+    在页面 DOM 中将公网 IP 替换为 '**.**.**.**'。
+    仅当全局开关 ENABLE_IP_MASK 为 True 时执行。
+    """
     if not ENABLE_IP_MASK:
         return
     try:
@@ -54,7 +57,6 @@ async def mask_ip_in_page(page: Page) -> None:
         return
     if not ip:
         return
-    # 转义 IP 中的点以用于正则
     escaped_ip = ip.replace('.', '\\.')
     js_code = f"""
         (function() {{
@@ -97,16 +99,6 @@ def validate_viewport_params(width: int, height: int, device_scale_factor: float
         raise ValueError(f"device_scale_factor must be between 0.1 and 5.0, got {device_scale_factor}")
 
 def normalize_url(url: str, allow_schemes_whitelist: bool = True) -> str:
-    """
-    标准化 URL。
-    - 若 allow_schemes_whitelist=True（默认），仅允许 http/https 方案，其他抛出 ValueError。
-    - 若 allow_schemes_whitelist=False，不进行方案白名单校验，允许任何 scheme（如 ftp, file, chrome 等）。
-    无论哪种模式，都会：
-      - 去除首尾空白，非空校验
-      - 若无 scheme，则补全为 https://
-      - 若含 '://' 但无有效 scheme，则抛错
-      - 检查 netloc 非空（对于 http/https），其他 scheme 仅检查 netloc 或 path 至少存在一项
-    """
     cleaned = url.strip()
     if not cleaned:
         raise ValueError("URL cannot be empty")
@@ -125,14 +117,9 @@ def normalize_url(url: str, allow_schemes_whitelist: bool = True) -> str:
     return parsed.geturl()
 
 async def navigate_to_page(page: Page, url: str) -> None:
-    """
-    直接导航到已标准化的 URL，不再重新标准化，避免白名单冲突。
-    调用者应确保传入的 URL 已通过 normalize_url 处理。
-    """
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
     except Exception as exc:
-        # 日志中使用掩码，避免 IP 泄露
         logger.warning(f"Navigation warning for {mask_ip_in_text(url)}: {exc}")
 
 async def scroll_to_trigger_lazy_loading(
@@ -141,14 +128,9 @@ async def scroll_to_trigger_lazy_loading(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
 ) -> None:
-    """
-    通过 page.evaluate() 将滚动逻辑作为纯 JS 函数在浏览器中执行，
-    使用参数传递避免 f-string 插值冲突，并修正首次滚动有效位置。
-    """
     logger.info("Scrolling to trigger lazy loading via JS...")
     js_code = """
         (async (viewportHeight, maxScrolls, maxStableBeforeBreak) => {
-            // 从视口高度开始滚动，避免首次无效滚动
             let currentScroll = viewportHeight;
             let scrollCount = 0;
             let stableCount = 0;
@@ -196,7 +178,6 @@ async def setup_media_blocking(context: BrowserContext, block_media: bool) -> No
                 else:
                     await route.continue_()
             except Exception:
-                # 忽略因页面关闭或请求已处理等导致的异常
                 pass
         await context.route("**/*", route_handler)
     else:

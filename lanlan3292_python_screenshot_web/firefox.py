@@ -19,7 +19,7 @@ from .browser_common import (
     setup_media_blocking,
     mask_ip_in_text,
     ENABLE_IP_MASK,
-    mask_ip_in_page,          # 新增
+    mask_ip_in_page,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 # ---------- Firefox Cookie 路径 ----------
 FIREFOX_COOKIE_DB = Path(os.getenv("FIREFOX_COOKIE_DB", "")) if os.getenv("FIREFOX_COOKIE_DB") else None
 
-# ---------- Cookie 加载函数 ----------
 def _normalize_cookie_host(hostname: str) -> str:
     cleaned = hostname.strip()
     if not cleaned:
@@ -46,11 +45,6 @@ def _cookie_domain_matches(cookie_host: str, hostname: str) -> bool:
     return hostname == cookie_host
 
 def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dict]:
-    """
-    从 Firefox cookie 数据库加载匹配的 cookies。
-    匹配时使用原始 host（含可能的前导点），匹配成功后再剥离前导点，
-    以满足 Playwright 的 domain 规范（不能以 . 开头）。
-    """
     db_file = db_path or FIREFOX_COOKIE_DB
     if db_file is None:
         logger.info("Firefox cookie DB path is not configured")
@@ -77,11 +71,9 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
 
             matched = []
             for row in rows:
-                raw_host = row["host"]  # 原始 host，可能以 . 开头
-                # 先用原始 host 进行匹配（泛域名匹配）
+                raw_host = row["host"]
                 if _cookie_domain_matches(raw_host, cookie_hostname):
                     cookie_dict = dict(row)
-                    # 匹配成功后，剥离前导点（如果存在），供 Playwright 注入
                     host_for_playwright = raw_host
                     if host_for_playwright.startswith("."):
                         host_for_playwright = host_for_playwright[1:]
@@ -92,7 +84,6 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
                 f"Loaded {len(matched)} cookie(s) for hostname: {mask_ip_in_text(hostname)} "
                 f"(normalized: {mask_ip_in_text(cookie_hostname)}) out of {len(rows)} total"
             )
-            # 使用 debug 级别，避免日志风暴
             for row in matched:
                 logger.debug(
                     f"cookie -> host={row['host']} name={row['name']} "
@@ -116,6 +107,7 @@ async def capture_screenshot_bytes(
     max_stable_before_break: int = 3,
     block_media: bool = False,
     allow_schemes_whitelist: bool = True,
+    mask_dom_text: bool = True,  # 参数重命名
 ) -> tuple[bytes, str]:
     validate_viewport_params(width, height, device_scale_factor)
     normalized = normalize_url(url, allow_schemes_whitelist=allow_schemes_whitelist)
@@ -174,7 +166,7 @@ async def capture_screenshot_bytes(
                         payload = {
                             "name": cookie["name"],
                             "value": cookie["value"],
-                            "domain": cookie["host"],  # 已剥离前导点
+                            "domain": cookie["host"],
                             "path": cookie["path"] or "/",
                             "secure": bool(cookie.get("isSecure", 0)),
                             "httpOnly": bool(cookie.get("isHttpOnly", 0)),
@@ -200,7 +192,6 @@ async def capture_screenshot_bytes(
             await navigate_to_page(page, normalized)
             await page.wait_for_timeout(3000)
 
-            # 优先等待网络空闲，超时 5 秒则回退到 1 秒等待
             try:
                 await page.wait_for_load_state("networkidle", timeout=5000)
             except Exception:
@@ -221,8 +212,8 @@ async def capture_screenshot_bytes(
             final_url = page.url
             logger.info(f"Capturing screenshot (full_page={full_page})")
 
-            # 在截图前对 DOM 中的 IP 进行掩码处理
-            await mask_ip_in_page(page)
+            if mask_dom_text:
+                await mask_ip_in_page(page)
 
             image_bytes = await page.screenshot(full_page=full_page)
             logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={mask_ip_in_text(final_url)}")
@@ -244,6 +235,7 @@ async def capture_screenshot(
     max_stable_before_break: int = 3,
     block_media: bool = False,
     allow_schemes_whitelist: bool = True,
+    mask_dom_text: bool = True,  # 参数重命名
 ) -> tuple[bytes, str]:
     image_bytes, final_url = await capture_screenshot_bytes(
         url,
@@ -257,5 +249,6 @@ async def capture_screenshot(
         max_stable_before_break=max_stable_before_break,
         block_media=block_media,
         allow_schemes_whitelist=allow_schemes_whitelist,
+        mask_dom_text=mask_dom_text,
     )
     return image_bytes, final_url

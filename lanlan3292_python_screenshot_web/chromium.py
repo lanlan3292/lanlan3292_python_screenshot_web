@@ -13,7 +13,7 @@ from .browser_common import (
     setup_media_blocking,
     mask_ip_in_text,
     ENABLE_IP_MASK,
-    mask_ip_in_page,          # 新增
+    mask_ip_in_page,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,11 +29,8 @@ async def capture_screenshot_bytes(
     max_stable_before_break: int = 3,
     block_media: bool = False,
     allow_schemes_whitelist: bool = True,
+    mask_dom_text: bool = True,  # 参数重命名
 ) -> tuple[bytes, str]:
-    """
-    使用 Chromium 截图并返回 (图片字节数据, 最终URL)。
-    不包含 Cookie 注入功能。
-    """
     validate_viewport_params(width, height, device_scale_factor)
     normalized = normalize_url(url, allow_schemes_whitelist=allow_schemes_whitelist)
 
@@ -73,7 +70,6 @@ async def capture_screenshot_bytes(
             await navigate_to_page(page, normalized)
             await page.wait_for_timeout(3000)
 
-            # 优先等待网络空闲（networkidle），超时 5 秒则回退到 1 秒等待
             try:
                 await page.wait_for_load_state("networkidle", timeout=5000)
             except Exception:
@@ -94,8 +90,8 @@ async def capture_screenshot_bytes(
             final_url = page.url
             logger.info(f"Capturing screenshot (full_page={full_page})")
 
-            # 在截图前对 DOM 中的 IP 进行掩码处理
-            await mask_ip_in_page(page)
+            if mask_dom_text:
+                await mask_ip_in_page(page)
 
             image_bytes = await page.screenshot(full_page=full_page)
             logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={mask_ip_in_text(final_url)}")
@@ -116,6 +112,7 @@ async def capture_screenshot(
     max_stable_before_break: int = 3,
     block_media: bool = False,
     allow_schemes_whitelist: bool = True,
+    mask_dom_text: bool = True,  # 参数重命名
 ) -> tuple[bytes, str]:
     image_bytes, final_url = await capture_screenshot_bytes(
         url,
@@ -128,5 +125,6 @@ async def capture_screenshot(
         max_stable_before_break=max_stable_before_break,
         block_media=block_media,
         allow_schemes_whitelist=allow_schemes_whitelist,
+        mask_dom_text=mask_dom_text,
     )
     return image_bytes, final_url
