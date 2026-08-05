@@ -12,7 +12,6 @@ from .browser_common import (
     scroll_to_trigger_lazy_loading,
     setup_media_blocking,
     mask_ip_in_text,
-    ENABLE_IP_MASK,
     mask_ip_in_page,
 )
 
@@ -29,7 +28,7 @@ async def capture_screenshot_bytes(
     max_stable_before_break: int = 3,
     block_media: bool = False,
     allow_schemes_whitelist: bool = True,
-    mask_dom_text: bool = True,  # 参数重命名
+    ip_mask_mode: int | None = None,          # 仅用于 DOM 掩码
 ) -> tuple[bytes, str]:
     validate_viewport_params(width, height, device_scale_factor)
     normalized = normalize_url(url, allow_schemes_whitelist=allow_schemes_whitelist)
@@ -90,8 +89,12 @@ async def capture_screenshot_bytes(
             final_url = page.url
             logger.info(f"Capturing screenshot (full_page={full_page})")
 
-            if mask_dom_text:
-                await mask_ip_in_page(page)
+            # DOM 掩码（仅由 ip_mask_mode 控制）
+            if ip_mask_mode is None:
+                # 使用全局默认 IP_MASK_MODE，但我们这里不直接引用，通过 mask_ip_in_page 内部使用
+                pass
+            # 调用 mask_ip_in_page，它会使用传入的 mode 或全局默认
+            await mask_ip_in_page(page, ip_mask_mode)
 
             image_bytes = await page.screenshot(full_page=full_page)
             logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={mask_ip_in_text(final_url)}")
@@ -112,9 +115,9 @@ async def capture_screenshot(
     max_stable_before_break: int = 3,
     block_media: bool = False,
     allow_schemes_whitelist: bool = True,
-    mask_dom_text: bool = True,  # 参数重命名
+    ip_mask_mode: int | None = None,
 ) -> tuple[bytes, str]:
-    image_bytes, final_url = await capture_screenshot_bytes(
+    return await capture_screenshot_bytes(
         url,
         width=width,
         height=height,
@@ -125,6 +128,5 @@ async def capture_screenshot(
         max_stable_before_break=max_stable_before_break,
         block_media=block_media,
         allow_schemes_whitelist=allow_schemes_whitelist,
-        mask_dom_text=mask_dom_text,
+        ip_mask_mode=ip_mask_mode,
     )
-    return image_bytes, final_url
