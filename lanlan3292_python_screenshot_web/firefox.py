@@ -5,15 +5,14 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import logging
 from pathlib import Path
 from urllib.parse import urlparse
-from datetime import datetime
 
 from playwright.async_api import async_playwright
 
 from .browser_common import (
     normalize_url,
-    log_message,
     validate_viewport_params,
     navigate_to_page,
     scroll_to_trigger_lazy_loading,
@@ -21,9 +20,10 @@ from .browser_common import (
     generate_output_path,
 )
 
+logger = logging.getLogger(__name__)
+
 # ---------- Firefox Cookie 路径 ----------
 FIREFOX_COOKIE_DB = Path(os.getenv("FIREFOX_COOKIE_DB", "")) if os.getenv("FIREFOX_COOKIE_DB") else None
-
 
 # ---------- Cookie 加载函数 ----------
 def _normalize_cookie_host(hostname: str) -> str:
@@ -32,7 +32,6 @@ def _normalize_cookie_host(hostname: str) -> str:
         return ""
     parsed = urlparse(cleaned if "://" in cleaned else f"https://{cleaned}")
     return (parsed.hostname or "").lower()
-
 
 def _cookie_domain_matches(cookie_host: str, hostname: str) -> bool:
     cookie_host = (cookie_host or "").strip().lower()
@@ -44,14 +43,13 @@ def _cookie_domain_matches(cookie_host: str, hostname: str) -> bool:
         return hostname == domain or hostname.endswith("." + domain)
     return hostname == cookie_host
 
-
 def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dict]:
     db_file = db_path or FIREFOX_COOKIE_DB
     if db_file is None:
-        log_message("Firefox cookie DB path is not configured")
+        logger.info("Firefox cookie DB path is not configured")
         return []
     if not db_file.exists():
-        log_message(f"Firefox cookie DB not found: {db_file}")
+        logger.warning(f"Firefox cookie DB not found: {db_file}")
         return []
 
     temp_db_path = None
@@ -64,7 +62,7 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
 
         cookie_hostname = _normalize_cookie_host(hostname)
         if not cookie_hostname:
-            log_message(f"Empty cookie hostname for input: {hostname!r}")
+            logger.warning(f"Empty cookie hostname for input: {hostname!r}")
             return []
 
         conn = sqlite3.connect(db_file)
@@ -79,23 +77,22 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
             for row in rows
             if _cookie_domain_matches(row["host"], cookie_hostname)
         ]
-        log_message(
+        logger.info(
             f"Loaded {len(matched)} cookie(s) for hostname: {hostname} "
             f"(normalized: {cookie_hostname}) out of {len(rows)} total"
         )
         for row in matched:
-            log_message(
+            logger.info(
                 f"cookie -> host={row['host']} name={row['name']} "
                 f"path={row['path']} isSecure={row['isSecure']} isHttpOnly={row.get('isHttpOnly', 0)}"
             )
         return matched
     except Exception as exc:
-        log_message(f"Failed to load Firefox cookies: {exc}")
+        logger.error(f"Failed to load Firefox cookies: {exc}")
         return []
     finally:
         if temp_db_path and temp_db_path.exists():
             shutil.rmtree(temp_db_path.parent, ignore_errors=True)
-
 
 # ---------- 核心截图函数 ----------
 async def capture_screenshot_bytes(
@@ -116,7 +113,7 @@ async def capture_screenshot_bytes(
     hostname = parsed.hostname or ""
 
     async with async_playwright() as playwright:
-        log_message(f"Launching Firefox for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
+        logger.info(f"Launching Firefox for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
 
         browser = await playwright.firefox.launch(
             headless=True,
@@ -159,7 +156,7 @@ async def capture_screenshot_bytes(
             await setup_media_blocking(context, block_media)
 
             if inject_cookies:
-                log_message(f"Cookie injection enabled for {hostname}")
+                logger.info(f"Cookie injection enabled for {hostname}")
                 cookies = load_firefox_cookies(hostname)
                 if cookies:
                     cookie_payload = []
@@ -179,15 +176,15 @@ async def capture_screenshot_bytes(
                             if expiry_seconds > 0:
                                 payload["expires"] = expiry_seconds
                         cookie_payload.append(payload)
-                    log_message(f"Injecting {len(cookie_payload)} cookie(s)")
+                    logger.info(f"Injecting {len(cookie_payload)} cookie(s)")
                     try:
                         await context.add_cookies(cookie_payload)
                     except Exception as exc:
-                        log_message(f"Cookie injection failed: {exc}")
+                        logger.error(f"Cookie injection failed: {exc}")
                 else:
-                    log_message(f"No cookies to inject for {hostname}")
+                    logger.info(f"No cookies to inject for {hostname}")
             else:
-                log_message("Cookie injection skipped (inject_cookies=False)")
+                logger.info("Cookie injection skipped (inject_cookies=False)")
 
             page = await context.new_page()
             await navigate_to_page(page, normalized)
@@ -195,7 +192,7 @@ async def capture_screenshot_bytes(
             try:
                 await page.wait_for_load_state("load", timeout=60000)
             except Exception as exc:
-                log_message(f"Load state warning: {exc}")
+                logger.warning(f"Load state warning: {exc}")
             await page.wait_for_timeout(5000)
 
             if full_page:
@@ -207,15 +204,14 @@ async def capture_screenshot_bytes(
                 )
 
             final_url = page.url
-            log_message(f"Capturing screenshot (full_page={full_page})")
+            logger.info(f"Capturing screenshot (full_page={full_page})")
             image_bytes = await page.screenshot(full_page=full_page)
-            log_message(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={final_url}")
+            logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={final_url}")
             return image_bytes, final_url
 
         finally:
             await context.close()
             await browser.close()
-
 
 async def capture_screenshot(
     url: str,

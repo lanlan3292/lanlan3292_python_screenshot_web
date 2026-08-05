@@ -1,14 +1,13 @@
 # chromium.py
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from datetime import datetime
 
 from playwright.async_api import async_playwright
 
 from .browser_common import (
     normalize_url,
-    log_message,
     validate_viewport_params,
     navigate_to_page,
     scroll_to_trigger_lazy_loading,
@@ -16,6 +15,7 @@ from .browser_common import (
     generate_output_path,
 )
 
+logger = logging.getLogger(__name__)
 
 async def capture_screenshot_bytes(
     url: str,
@@ -36,7 +36,7 @@ async def capture_screenshot_bytes(
     normalized = normalize_url(url)
 
     async with async_playwright() as playwright:
-        log_message(f"Launching Chromium for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
+        logger.info(f"Launching Chromium for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
 
         browser = await playwright.chromium.launch(
             headless=True,
@@ -70,7 +70,7 @@ async def capture_screenshot_bytes(
             try:
                 await page.wait_for_load_state("load", timeout=60000)
             except Exception as exc:
-                log_message(f"Load state warning: {exc}")
+                logger.warning(f"Load state warning: {exc}")
             await page.wait_for_timeout(5000)
 
             if full_page:
@@ -82,15 +82,14 @@ async def capture_screenshot_bytes(
                 )
 
             final_url = page.url
-            log_message(f"Capturing screenshot (full_page={full_page})")
+            logger.info(f"Capturing screenshot (full_page={full_page})")
             image_bytes = await page.screenshot(full_page=full_page)
-            log_message(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={final_url}")
+            logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={final_url}")
             return image_bytes, final_url
 
         finally:
             await context.close()
             await browser.close()
-
 
 async def capture_screenshot(
     url: str,
