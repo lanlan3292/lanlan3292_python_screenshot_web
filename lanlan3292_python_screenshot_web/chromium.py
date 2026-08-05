@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from playwright.async_api import async_playwright
 
@@ -12,7 +11,6 @@ from .browser_common import (
     navigate_to_page,
     scroll_to_trigger_lazy_loading,
     setup_media_blocking,
-    generate_output_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,11 +65,12 @@ async def capture_screenshot_bytes(
             page = await context.new_page()
             await navigate_to_page(page, normalized)
 
+            # 优先等待网络空闲（networkidle），超时 5 秒则回退到 1 秒等待
             try:
-                await page.wait_for_load_state("load", timeout=60000)
-            except Exception as exc:
-                logger.warning(f"Load state warning: {exc}")
-            await page.wait_for_timeout(5000)
+                await page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                logger.warning("Network idle timeout, falling back to 1s wait")
+                await page.wait_for_timeout(1000)
 
             if full_page:
                 await scroll_to_trigger_lazy_loading(
@@ -93,21 +92,19 @@ async def capture_screenshot_bytes(
 
 async def capture_screenshot(
     url: str,
-    output_path: Path | None = None,
+    width: int = 1400,
+    height: int = 900,
     user_agent: str | None = None,
     full_page: bool = False,
     device_scale_factor: float = 1.0,
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
-) -> tuple[Path, str]:
-    output_path = generate_output_path(url, output_path, browser="chromium")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
+) -> tuple[bytes, str]:
     image_bytes, final_url = await capture_screenshot_bytes(
         url,
-        width=1400,
-        height=900,
+        width=width,
+        height=height,
         user_agent=user_agent,
         full_page=full_page,
         device_scale_factor=device_scale_factor,
@@ -115,5 +112,4 @@ async def capture_screenshot(
         max_stable_before_break=max_stable_before_break,
         block_media=block_media,
     )
-    output_path.write_bytes(image_bytes)
-    return output_path, final_url
+    return image_bytes, final_url

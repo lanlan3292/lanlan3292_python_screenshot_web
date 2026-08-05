@@ -17,7 +17,6 @@ from .browser_common import (
     navigate_to_page,
     scroll_to_trigger_lazy_loading,
     setup_media_blocking,
-    generate_output_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,47 +51,48 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
         logger.warning(f"Firefox cookie DB not found: {db_file}")
         return []
 
-    temp_db_path = None
-    try:
-        if db_path is None:
-            temp_dir = Path(tempfile.mkdtemp(prefix="firefox-cookies-"))
-            temp_db_path = temp_dir / "cookies.sqlite"
-            shutil.copy2(db_file, temp_db_path)
-            db_file = temp_db_path
-
-        cookie_hostname = _normalize_cookie_host(hostname)
-        if not cookie_hostname:
-            logger.warning(f"Empty cookie hostname for input: {hostname!r}")
-            return []
-
-        conn = sqlite3.connect(db_file)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT host, name, value, path, isSecure, isHttpOnly, expiry FROM moz_cookies"
-        ).fetchall()
-        conn.close()
-
-        matched = [
-            dict(row)
-            for row in rows
-            if _cookie_domain_matches(row["host"], cookie_hostname)
-        ]
-        logger.info(
-            f"Loaded {len(matched)} cookie(s) for hostname: {hostname} "
-            f"(normalized: {cookie_hostname}) out of {len(rows)} total"
-        )
-        for row in matched:
-            logger.info(
-                f"cookie -> host={row['host']} name={row['name']} "
-                f"path={row['path']} isSecure={row['isSecure']} isHttpOnly={row.get('isHttpOnly', 0)}"
-            )
-        return matched
-    except Exception as exc:
-        logger.error(f"Failed to load Firefox cookies: {exc}")
+    cookie_hostname = _normalize_cookie_host(hostname)
+    if not cookie_hostname:
+        logger.warning(f"Empty cookie hostname for input: {hostname!r}")
         return []
-    finally:
-        if temp_db_path and temp_db_path.exists():
-            shutil.rmtree(temp_db_path.parent, ignore_errors=True)
+
+    # 使用 TemporaryDirectory 自动清理
+    with tempfile.TemporaryDirectory(prefix="firefox-cookies-") as temp_dir:
+        temp_db_path = Path(temp_dir) / "cookies.sqlite"
+        shutil.copy2(db_file, temp_db_path)
+        try:
+            conn = sqlite3.connect(temp_db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT host, name, value, path, isSecure, isHttpOnly, expiry FROM moz_cookies"
+            ).fetchall()
+            conn.close()
+
+            matched = []
+            for row in rows:
+                host = row["host"]
+                # 移除前导点（.），满足 Playwright domain 规范
+                if host.startswith("."):
+                    host = host[1:]
+                if _cookie_domain_matches(host, cookie_hostname):
+                    # 转换为 dict，并修正 host 字段
+                    cookie_dict = dict(row)
+                    cookie_dict["host"] = host
+                    matched.append(cookie_dict)
+
+            logger.info(
+                f"Loaded {len(matched)} cookie(s) for hostname: {hostname} "
+                f"(normalized: {cookie_hostname}) out of {len(rows)} total"
+            )
+            for row in matched:
+                logger.debug(
+                    f"cookie -> host={row['host']} name={row['name']} "
+                    f"path={row['path']} isSecure={row['isSecure']} isHttpOnly={row.get('isHttpOnly', 0)}"
+                )
+            return matched
+        except Exception as exc:
+            logger.error(f"Failed to load Firefox cookies: {exc}")
+            return []
 
 # ---------- 核心截图函数 ----------
 async def capture_screenshot_bytes(
@@ -189,11 +189,12 @@ async def capture_screenshot_bytes(
             page = await context.new_page()
             await navigate_to_page(page, normalized)
 
+            # 优先等待网络空闲（networkidle），超时 5 秒则回退到 1 秒等待
             try:
-                await page.wait_for_load_state("load", timeout=60000)
-            except Exception as exc:
-                logger.warning(f"Load state warning: {exc}")
-            await page.wait_for_timeout(5000)
+                await page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                logger.warning("Network idle timeout, falling back to 1s wait")
+                await page.wait_for_timeout(1000)
 
             if full_page:
                 await scroll_to_trigger_lazy_loading(
@@ -215,7 +216,8 @@ async def capture_screenshot_bytes(
 
 async def capture_screenshot(
     url: str,
-    output_path: Path | None = None,
+    width: int = 1400,
+    height: int = 900,
     inject_cookies: bool = False,
     user_agent: str | None = None,
     full_page: bool = False,
@@ -223,14 +225,11 @@ async def capture_screenshot(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
-) -> tuple[Path, str]:
-    output_path = generate_output_path(url, output_path, browser="firefox")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
+) -> tuple[bytes, str]:
     image_bytes, final_url = await capture_screenshot_bytes(
         url,
-        width=1400,
-        height=900,
+        width=width,
+        height=height,
         inject_cookies=inject_cookies,
         user_agent=user_agent,
         full_page=full_page,
@@ -239,5 +238,4 @@ async def capture_screenshot(
         max_stable_before_break=max_stable_before_break,
         block_media=block_media,
     )
-    output_path.write_bytes(image_bytes)
-    return output_path, final_url
+    return image_bytes, final_url

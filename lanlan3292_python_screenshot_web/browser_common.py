@@ -1,27 +1,12 @@
-# browser_common.py
 from __future__ import annotations
 
-import inspect
-import re
-import time
-import uuid
 import logging
-from datetime import datetime
-from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.async_api import Page, BrowserContext
 
 logger = logging.getLogger(__name__)
 
-# ---------- 路径配置 ----------
-ROOT = Path.cwd()
-SCREENSHOT_DIR = ROOT / "output/lanlan3292_python_screenshot_web"
-SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-
-ALLOWED_SCHEMES = {"http", "https"}
-
-# ---------- 校验 ----------
 def validate_viewport_params(width: int, height: int, device_scale_factor: float) -> None:
     if not (640 <= width <= 4096):
         raise ValueError(f"Width must be between 640 and 4096, got {width}")
@@ -30,8 +15,17 @@ def validate_viewport_params(width: int, height: int, device_scale_factor: float
     if not (0.1 <= device_scale_factor <= 5.0):
         raise ValueError(f"device_scale_factor must be between 0.1 and 5.0, got {device_scale_factor}")
 
-# ---------- URL 处理 ----------
-def normalize_url(url: str) -> str:
+def normalize_url(url: str, allow_schemes_whitelist: bool = True) -> str:
+    """
+    标准化 URL。
+    - 若 allow_schemes_whitelist=True（默认），仅允许 http/https 方案，其他抛出 ValueError。
+    - 若 allow_schemes_whitelist=False，不进行方案白名单校验，允许任何 scheme（如 ftp, file 等）。
+    无论哪种模式，都会：
+      - 去除首尾空白，非空校验
+      - 若无 scheme，则补全为 https://
+      - 若含 '://' 但无有效 scheme，则抛错
+      - 检查 netloc 非空
+    """
     cleaned = url.strip()
     if not cleaned:
         raise ValueError("URL cannot be empty")
@@ -41,14 +35,16 @@ def normalize_url(url: str) -> str:
             raise ValueError("URL must include a valid scheme")
         return f"https://{cleaned}"
     scheme = parsed.scheme.lower()
-    if scheme not in ALLOWED_SCHEMES:
+    if allow_schemes_whitelist and scheme not in {"http", "https"}:
         raise ValueError(f"Unsupported URL scheme: {scheme}")
-    if not parsed.netloc:
+    if scheme in {"http","https"} and not parsed.netloc:
         raise ValueError("URL must include a hostname")
+    if not parsed.netloc and not parsed.path:
+        raise ValueError("URL must include a hostname or path")
     return parsed.geturl()
 
 async def navigate_to_page(page: Page, url: str) -> None:
-    normalized = normalize_url(url)
+    normalized = normalize_url(url)  # 默认启用白名单
     try:
         await page.goto(normalized, wait_until="domcontentloaded", timeout=60000)
     except Exception as exc:
@@ -60,57 +56,63 @@ async def scroll_to_trigger_lazy_loading(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
 ) -> None:
-    logger.info("Scrolling to trigger lazy loading...")
-    scroll_height = await page.evaluate("document.body.scrollHeight")
-    current_scroll = 0
-    scroll_count = 0
-    stable_count = 0
+    """
+    通过 page.evaluate() 将滚动逻辑作为纯 JS 函数在浏览器中执行，
+    使用参数传递避免 f-string 插值冲突，并修正首次滚动有效位置。
+    """
+    logger.info("Scrolling to trigger lazy loading via JS...")
+    js_code = """
+        (async (viewportHeight, maxScrolls, maxStableBeforeBreak) => {
+            // 从视口高度开始滚动，避免首次无效滚动
+            let currentScroll = viewportHeight;
+            let scrollCount = 0;
+            let stableCount = 0;
+            let scrollHeight = document.body.scrollHeight;
 
-    while current_scroll < scroll_height and scroll_count < max_scrolls:
-        await page.evaluate(f"window.scrollTo(0, {current_scroll})")
-        await page.wait_for_timeout(500)
+            while (currentScroll < scrollHeight && scrollCount < maxScrolls) {
+                window.scrollTo(0, currentScroll);
+                await new Promise(resolve => setTimeout(resolve, 500));
 
-        new_scroll_height = await page.evaluate("document.body.scrollHeight")
-        if new_scroll_height == scroll_height:
-            stable_count += 1
-        else:
-            stable_count = 0
-            scroll_height = new_scroll_height
+                const newScrollHeight = document.body.scrollHeight;
+                if (newScrollHeight === scrollHeight) {
+                    stableCount++;
+                } else {
+                    stableCount = 0;
+                    scrollHeight = newScrollHeight;
+                }
 
-        if stable_count >= max_stable_before_break:
-            logger.info("Page height stable, stopping scroll.")
-            break
+                if (stableCount >= maxStableBeforeBreak) {
+                    console.log("Page height stable, stopping scroll.");
+                    break;
+                }
 
-        current_scroll += viewport_height
-        scroll_count += 1
+                currentScroll += viewportHeight;
+                scrollCount++;
+            }
 
-    if scroll_count >= max_scrolls:
-        logger.info(f"Reached max scroll limit ({max_scrolls}), stopping.")
+            if (scrollCount >= maxScrolls) {
+                console.log("Reached max scroll limit, stopping.");
+            }
 
-    await page.evaluate("window.scrollTo(0, 0)")
-    await page.wait_for_timeout(1000)
+            window.scrollTo(0, 0);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        })(viewportHeight, maxScrolls, maxStableBeforeBreak);
+    """
+    await page.evaluate(js_code, viewport_height, max_scrolls, max_stable_before_break)
     logger.info("Scrolling complete")
 
 async def setup_media_blocking(context: BrowserContext, block_media: bool) -> None:
     if block_media:
         logger.info("Blocking image/media resources.")
         async def route_handler(route):
-            if route.request.resource_type in {"image", "media"}:
-                await route.abort()
-            else:
-                await route.continue_()
+            try:
+                if route.request.resource_type in {"image", "media"}:
+                    await route.abort()
+                else:
+                    await route.continue_()
+            except Exception:
+                # 忽略因页面关闭或请求已处理等导致的异常
+                pass
         await context.route("**/*", route_handler)
     else:
         logger.info("Media blocking disabled.")
-
-def generate_output_path(url: str, output_path: Path | None = None, browser: str | None = None) -> Path:
-    if output_path is not None:
-        return output_path
-    normalized = normalize_url(url)
-    parsed = urlparse(normalized)
-    host = parsed.hostname or "page"
-    slug = re.sub(r"[^a-z0-9]+", "-", host.lower()).strip("-") or "page"
-    prefix = f"{browser}" if browser else ""
-    short_id = uuid.uuid4().hex
-    file_name = f"{slug}-{int(time.time())}-{prefix}-{short_id}.png"
-    return SCREENSHOT_DIR / file_name
