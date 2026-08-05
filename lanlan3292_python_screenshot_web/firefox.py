@@ -17,6 +17,9 @@ from .browser_common import (
     navigate_to_page,
     scroll_to_trigger_lazy_loading,
     setup_media_blocking,
+    mask_ip_in_text,
+    ENABLE_IP_MASK,
+    mask_ip_in_page,          # 新增
 )
 
 logger = logging.getLogger(__name__)
@@ -86,8 +89,8 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
                     matched.append(cookie_dict)
 
             logger.info(
-                f"Loaded {len(matched)} cookie(s) for hostname: {hostname} "
-                f"(normalized: {cookie_hostname}) out of {len(rows)} total"
+                f"Loaded {len(matched)} cookie(s) for hostname: {mask_ip_in_text(hostname)} "
+                f"(normalized: {mask_ip_in_text(cookie_hostname)}) out of {len(rows)} total"
             )
             # 使用 debug 级别，避免日志风暴
             for row in matched:
@@ -112,7 +115,7 @@ async def capture_screenshot_bytes(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
-    allow_schemes_whitelist: bool = True,  # 新增
+    allow_schemes_whitelist: bool = True,
 ) -> tuple[bytes, str]:
     validate_viewport_params(width, height, device_scale_factor)
     normalized = normalize_url(url, allow_schemes_whitelist=allow_schemes_whitelist)
@@ -120,7 +123,7 @@ async def capture_screenshot_bytes(
     hostname = parsed.hostname or ""
 
     async with async_playwright() as playwright:
-        logger.info(f"Launching Firefox for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
+        logger.info(f"Launching Firefox for {mask_ip_in_text(normalized)} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
 
         browser = await playwright.firefox.launch(
             headless=True,
@@ -163,7 +166,7 @@ async def capture_screenshot_bytes(
             await setup_media_blocking(context, block_media)
 
             if inject_cookies:
-                logger.info(f"Cookie injection enabled for {hostname}")
+                logger.info(f"Cookie injection enabled for {mask_ip_in_text(hostname)}")
                 cookies = load_firefox_cookies(hostname)
                 if cookies:
                     cookie_payload = []
@@ -189,12 +192,12 @@ async def capture_screenshot_bytes(
                     except Exception as exc:
                         logger.error(f"Cookie injection failed: {exc}")
                 else:
-                    logger.info(f"No cookies to inject for {hostname}")
+                    logger.info(f"No cookies to inject for {mask_ip_in_text(hostname)}")
             else:
                 logger.info("Cookie injection skipped (inject_cookies=False)")
 
             page = await context.new_page()
-            await navigate_to_page(page, normalized)  # 传入已标准化的 URL
+            await navigate_to_page(page, normalized)
             await page.wait_for_timeout(3000)
 
             # 优先等待网络空闲，超时 5 秒则回退到 1 秒等待
@@ -217,8 +220,12 @@ async def capture_screenshot_bytes(
 
             final_url = page.url
             logger.info(f"Capturing screenshot (full_page={full_page})")
+
+            # 在截图前对 DOM 中的 IP 进行掩码处理
+            await mask_ip_in_page(page)
+
             image_bytes = await page.screenshot(full_page=full_page)
-            logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={final_url}")
+            logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={mask_ip_in_text(final_url)}")
             return image_bytes, final_url
 
         finally:
@@ -236,7 +243,7 @@ async def capture_screenshot(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
-    allow_schemes_whitelist: bool = True,  # 新增
+    allow_schemes_whitelist: bool = True,
 ) -> tuple[bytes, str]:
     image_bytes, final_url = await capture_screenshot_bytes(
         url,

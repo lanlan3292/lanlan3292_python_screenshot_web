@@ -2,11 +2,92 @@ from __future__ import annotations
 
 import logging
 from urllib.parse import urlparse
+from pathlib import Path
+import tempfile
+from urllib.request import Request, urlopen
 
 from playwright.async_api import Page, BrowserContext
 
 logger = logging.getLogger(__name__)
 
+# ---------- 公网 IP 掩码（内嵌） ----------
+PUBLIC_IP_FILE = Path(tempfile.gettempdir()) / "public_ip.env"
+ENABLE_IP_MASK = True  # 默认开启掩码
+
+def get_public_ip() -> str:
+    """获取当前公网 IP，结果缓存到临时文件。"""
+    try:
+        request = Request("https://api.ip.sb/ip", headers={"User-Agent": "curl/8.0"})
+        with urlopen(request, timeout=10) as response:
+            ip = response.read().decode("utf-8").strip()
+        PUBLIC_IP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PUBLIC_IP_FILE.write_text(ip, encoding="utf-8")
+        return ip
+    except Exception:
+        if PUBLIC_IP_FILE.exists():
+            cached = PUBLIC_IP_FILE.read_text(encoding="utf-8").strip()
+            if cached:
+                return cached
+        raise
+
+def mask_ip_in_text(text: str, ip_address: str | None = None) -> str:
+    """如果开关开启，将文本中的公网 IP 替换为 '**.**.**.**'。"""
+    if not ENABLE_IP_MASK:
+        return text
+    if ip_address is None:
+        try:
+            ip_address = get_public_ip()
+        except Exception:
+            return text
+    if not ip_address or ip_address not in text:
+        return text
+    return text.replace(ip_address, "**.**.**.**")
+
+async def mask_ip_in_page(page: Page) -> None:
+    """在页面 DOM 中将公网 IP 替换为 '**.**.**.**'。"""
+    if not ENABLE_IP_MASK:
+        return
+    try:
+        ip = get_public_ip()
+    except Exception:
+        logger.warning("Failed to get public IP, skipping DOM IP masking")
+        return
+    if not ip:
+        return
+    # 转义 IP 中的点以用于正则
+    escaped_ip = ip.replace('.', '\\.')
+    js_code = f"""
+        (function() {{
+            const ip = '{ip}';
+            const escaped = '{escaped_ip}';
+            const regex = new RegExp(escaped, 'g');
+            const walker = document.createTreeWalker(
+                document.body,
+                NodeFilter.SHOW_TEXT,
+                {{
+                    acceptNode: function(node) {{
+                        if (node.textContent.includes(ip)) return NodeFilter.FILTER_ACCEPT;
+                        return NodeFilter.FILTER_REJECT;
+                    }}
+                }}
+            );
+            const nodes = [];
+            let node;
+            while (node = walker.nextNode()) {{
+                nodes.push(node);
+            }}
+            for (let n of nodes) {{
+                n.textContent = n.textContent.replace(regex, '**.**.**.**');
+            }}
+        }})();
+    """
+    try:
+        await page.evaluate(js_code)
+        logger.info("DOM IP masking applied")
+    except Exception as e:
+        logger.warning(f"Failed to mask IP in DOM: {e}")
+
+# ---------- 原有函数 ----------
 def validate_viewport_params(width: int, height: int, device_scale_factor: float) -> None:
     if not (640 <= width <= 4096):
         raise ValueError(f"Width must be between 640 and 4096, got {width}")
@@ -51,7 +132,8 @@ async def navigate_to_page(page: Page, url: str) -> None:
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
     except Exception as exc:
-        logger.warning(f"Navigation warning for {url}: {exc}")
+        # 日志中使用掩码，避免 IP 泄露
+        logger.warning(f"Navigation warning for {mask_ip_in_text(url)}: {exc}")
 
 async def scroll_to_trigger_lazy_loading(
     page: Page,

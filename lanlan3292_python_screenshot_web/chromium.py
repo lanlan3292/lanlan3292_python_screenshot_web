@@ -11,6 +11,9 @@ from .browser_common import (
     navigate_to_page,
     scroll_to_trigger_lazy_loading,
     setup_media_blocking,
+    mask_ip_in_text,
+    ENABLE_IP_MASK,
+    mask_ip_in_page,          # 新增
 )
 
 logger = logging.getLogger(__name__)
@@ -25,7 +28,7 @@ async def capture_screenshot_bytes(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
-    allow_schemes_whitelist: bool = True,  # 新增，默认保持白名单
+    allow_schemes_whitelist: bool = True,
 ) -> tuple[bytes, str]:
     """
     使用 Chromium 截图并返回 (图片字节数据, 最终URL)。
@@ -35,7 +38,7 @@ async def capture_screenshot_bytes(
     normalized = normalize_url(url, allow_schemes_whitelist=allow_schemes_whitelist)
 
     async with async_playwright() as playwright:
-        logger.info(f"Launching Chromium for {normalized} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
+        logger.info(f"Launching Chromium for {mask_ip_in_text(normalized)} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
 
         browser = await playwright.chromium.launch(
             headless=True,
@@ -67,7 +70,7 @@ async def capture_screenshot_bytes(
             await setup_media_blocking(context, block_media)
 
             page = await context.new_page()
-            await navigate_to_page(page, normalized)  # 传入已标准化的 URL
+            await navigate_to_page(page, normalized)
             await page.wait_for_timeout(3000)
 
             # 优先等待网络空闲（networkidle），超时 5 秒则回退到 1 秒等待
@@ -90,8 +93,12 @@ async def capture_screenshot_bytes(
 
             final_url = page.url
             logger.info(f"Capturing screenshot (full_page={full_page})")
+
+            # 在截图前对 DOM 中的 IP 进行掩码处理
+            await mask_ip_in_page(page)
+
             image_bytes = await page.screenshot(full_page=full_page)
-            logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={final_url}")
+            logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={mask_ip_in_text(final_url)}")
             return image_bytes, final_url
 
         finally:
@@ -108,7 +115,7 @@ async def capture_screenshot(
     max_scrolls: int = 15,
     max_stable_before_break: int = 3,
     block_media: bool = False,
-    allow_schemes_whitelist: bool = True,  # 新增
+    allow_schemes_whitelist: bool = True,
 ) -> tuple[bytes, str]:
     image_bytes, final_url = await capture_screenshot_bytes(
         url,
