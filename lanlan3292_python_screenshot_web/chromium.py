@@ -68,6 +68,7 @@ async def capture_screenshot_bytes(
 
             page = await context.new_page()
             await navigate_to_page(page, normalized)  # 传入已标准化的 URL
+            await page.wait_for_timeout(3000)
 
             # 优先等待网络空闲（networkidle），超时 5 秒则回退到 1 秒等待
             try:
@@ -75,6 +76,9 @@ async def capture_screenshot_bytes(
             except Exception:
                 logger.warning("Network idle timeout, falling back to 1s wait")
                 await page.wait_for_timeout(1000)
+
+            logger.info("wait 10s")
+            await page.wait_for_timeout(10000)
 
             if full_page:
                 await scroll_to_trigger_lazy_loading(
