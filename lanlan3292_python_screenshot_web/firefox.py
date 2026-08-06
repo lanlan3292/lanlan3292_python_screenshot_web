@@ -73,10 +73,6 @@ def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dic
                 raw_host = row["host"]
                 if _cookie_domain_matches(raw_host, cookie_hostname):
                     cookie_dict = dict(row)
-                    host_for_playwright = raw_host
-                    if host_for_playwright.startswith("."):
-                        host_for_playwright = host_for_playwright[1:]
-                    cookie_dict["host"] = host_for_playwright
                     matched.append(cookie_dict)
 
             # 日志中使用掩码（受 ENABLE_IP_MASK 控制）
