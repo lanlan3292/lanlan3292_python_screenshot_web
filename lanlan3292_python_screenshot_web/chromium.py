@@ -17,6 +17,7 @@ from .browser_common import (
 
 logger = logging.getLogger(__name__)
 
+
 async def capture_screenshot_bytes(
     url: str,
     width: int = 1400,
@@ -28,13 +29,17 @@ async def capture_screenshot_bytes(
     max_stable_before_break: int = 3,
     block_media: bool = False,
     allow_schemes_whitelist: bool = True,
-    ip_mask_mode: int | None = None,          # 仅用于 DOM 掩码
+    ip_mask_mode: int | None = None,
 ) -> tuple[bytes, str]:
     validate_viewport_params(width, height, device_scale_factor)
     normalized = normalize_url(url, allow_schemes_whitelist=allow_schemes_whitelist)
 
     async with async_playwright() as playwright:
-        logger.info(f"Launching Chromium for {mask_ip_in_text(normalized)} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
+        masked_normalized = await mask_ip_in_text(normalized)
+        logger.info(
+            "Launching Chromium for %s with viewport %sx%s, scale=%s, full_page=%s",
+            masked_normalized, width, height, device_scale_factor, full_page,
+        )
 
         browser = await playwright.chromium.launch(
             headless=True,
@@ -61,10 +66,8 @@ async def capture_screenshot_bytes(
             context_options["user_agent"] = user_agent
 
         context = await browser.new_context(**context_options)
-
         try:
             await setup_media_blocking(context, block_media)
-
             page = await context.new_page()
             await navigate_to_page(page, normalized)
             await page.wait_for_timeout(3000)
@@ -83,26 +86,20 @@ async def capture_screenshot_bytes(
                 logger.warning("Network idle timeout, falling back to 1s wait")
                 await page.wait_for_timeout(1000)
 
-            logger.info("wait 10s")
             await page.wait_for_timeout(10000)
-
             final_url = page.url
-            logger.info(f"Capturing screenshot (full_page={full_page})")
-
-            # DOM 掩码（仅由 ip_mask_mode 控制）
-            if ip_mask_mode is None:
-                # 使用全局默认 IP_MASK_MODE，但我们这里不直接引用，通过 mask_ip_in_page 内部使用
-                pass
-            # 调用 mask_ip_in_page，它会使用传入的 mode 或全局默认
             await mask_ip_in_page(page, ip_mask_mode)
-
             image_bytes = await page.screenshot(full_page=full_page)
-            logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={mask_ip_in_text(final_url)}")
+            masked_final_url = await mask_ip_in_text(final_url)
+            logger.info(
+                "Screenshot captured, size=%s bytes, final_url=%s",
+                len(image_bytes), masked_final_url,
+            )
             return image_bytes, final_url
-
         finally:
             await context.close()
             await browser.close()
+
 
 async def capture_screenshot(
     url: str,
