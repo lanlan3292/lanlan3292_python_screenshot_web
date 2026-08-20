@@ -1,11 +1,12 @@
 # firefox.py
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import shutil
 import sqlite3
 import tempfile
-import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,9 +23,8 @@ from .browser_common import (
 )
 
 logger = logging.getLogger(__name__)
-
-# ---------- Firefox Cookie 路径 ----------
 FIREFOX_COOKIE_DB = Path(os.getenv("FIREFOX_COOKIE_DB", "")) if os.getenv("FIREFOX_COOKIE_DB") else None
+
 
 def _normalize_cookie_host(hostname: str) -> str:
     cleaned = hostname.strip()
@@ -32,6 +32,7 @@ def _normalize_cookie_host(hostname: str) -> str:
         return ""
     parsed = urlparse(cleaned if "://" in cleaned else f"https://{cleaned}")
     return (parsed.hostname or "").lower()
+
 
 def _cookie_domain_matches(cookie_host: str, hostname: str) -> bool:
     cookie_host = (cookie_host or "").strip().lower()
@@ -43,54 +44,38 @@ def _cookie_domain_matches(cookie_host: str, hostname: str) -> bool:
         return hostname == domain or hostname.endswith("." + domain)
     return hostname == cookie_host
 
-def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dict]:
+
+def _load_firefox_cookies_sync(hostname: str, db_path: Path | None = None) -> list[dict]:
     db_file = db_path or FIREFOX_COOKIE_DB
-    if db_file is None:
-        logger.info("Firefox cookie DB path is not configured")
-        return []
-    if not db_file.exists():
-        logger.warning(f"Firefox cookie DB not found: {db_file}")
+    if db_file is None or not db_file.exists():
         return []
 
     cookie_hostname = _normalize_cookie_host(hostname)
     if not cookie_hostname:
-        logger.warning(f"Empty cookie hostname for input: {hostname!r}")
         return []
 
     with tempfile.TemporaryDirectory(prefix="firefox-cookies-") as temp_dir:
         temp_db_path = Path(temp_dir) / "cookies.sqlite"
         shutil.copy2(db_file, temp_db_path)
-        try:
-            conn = sqlite3.connect(temp_db_path)
+        with sqlite3.connect(temp_db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT host, name, value, path, isSecure, isHttpOnly, expiry FROM moz_cookies"
             ).fetchall()
-            conn.close()
 
-            matched = []
-            for row in rows:
-                raw_host = row["host"]
-                if _cookie_domain_matches(raw_host, cookie_hostname):
-                    cookie_dict = dict(row)
-                    matched.append(cookie_dict)
+        matched = []
+        for row in rows:
+            raw_host = row["host"]
+            if _cookie_domain_matches(raw_host, cookie_hostname):
+                matched.append(dict(row))
+        return matched
 
-            # 日志中使用掩码（受 ENABLE_IP_MASK 控制）
-            logger.info(
-                f"Loaded {len(matched)} cookie(s) for hostname: {mask_ip_in_text(hostname)} "
-                f"(normalized: {mask_ip_in_text(cookie_hostname)}) out of {len(rows)} total"
-            )
-            for row in matched:
-                logger.debug(
-                    f"cookie -> host={row['host']} name={row['name']} "
-                    f"path={row['path']} isSecure={row['isSecure']} isHttpOnly={row.get('isHttpOnly', 0)}"
-                )
-            return matched
-        except Exception as exc:
-            logger.error(f"Failed to load Firefox cookies: {exc}")
-            return []
 
-# ---------- 核心截图函数 ----------
+async def load_firefox_cookies(hostname: str, db_path: Path | None = None) -> list[dict]:
+    """Read Firefox's cookie database without blocking the event loop."""
+    return await asyncio.to_thread(_load_firefox_cookies_sync, hostname, db_path)
+
+
 async def capture_screenshot_bytes(
     url: str,
     width: int = 1400,
@@ -103,15 +88,18 @@ async def capture_screenshot_bytes(
     max_stable_before_break: int = 3,
     block_media: bool = False,
     allow_schemes_whitelist: bool = True,
-    ip_mask_mode: int | None = None,          # 仅用于 DOM 掩码
+    ip_mask_mode: int | None = None,
 ) -> tuple[bytes, str]:
     validate_viewport_params(width, height, device_scale_factor)
     normalized = normalize_url(url, allow_schemes_whitelist=allow_schemes_whitelist)
-    parsed = urlparse(normalized)
-    hostname = parsed.hostname or ""
+    hostname = urlparse(normalized).hostname or ""
 
     async with async_playwright() as playwright:
-        logger.info(f"Launching Firefox for {mask_ip_in_text(normalized)} with viewport {width}x{height}, scale={device_scale_factor}, full_page={full_page}")
+        masked_normalized = await mask_ip_in_text(normalized)
+        logger.info(
+            "Launching Firefox for %s with viewport %sx%s, scale=%s, full_page=%s",
+            masked_normalized, width, height, device_scale_factor, full_page,
+        )
 
         browser = await playwright.firefox.launch(
             headless=True,
@@ -149,13 +137,11 @@ async def capture_screenshot_bytes(
             context_options["user_agent"] = user_agent
 
         context = await browser.new_context(**context_options)
-
         try:
             await setup_media_blocking(context, block_media)
 
             if inject_cookies:
-                logger.info(f"Cookie injection enabled for {mask_ip_in_text(hostname)}")
-                cookies = load_firefox_cookies(hostname)
+                cookies = await load_firefox_cookies(hostname)
                 if cookies:
                     cookie_payload = []
                     for cookie in cookies:
@@ -174,15 +160,7 @@ async def capture_screenshot_bytes(
                             if expiry_seconds > 0:
                                 payload["expires"] = expiry_seconds
                         cookie_payload.append(payload)
-                    logger.info(f"Injecting {len(cookie_payload)} cookie(s)")
-                    try:
-                        await context.add_cookies(cookie_payload)
-                    except Exception as exc:
-                        logger.error(f"Cookie injection failed: {exc}")
-                else:
-                    logger.info(f"No cookies to inject for {mask_ip_in_text(hostname)}")
-            else:
-                logger.info("Cookie injection skipped (inject_cookies=False)")
+                    await context.add_cookies(cookie_payload)
 
             page = await context.new_page()
             await navigate_to_page(page, normalized)
@@ -202,22 +180,17 @@ async def capture_screenshot_bytes(
                 logger.warning("Network idle timeout, falling back to 1s wait")
                 await page.wait_for_timeout(1000)
 
-            logger.info("wait 10s")
             await page.wait_for_timeout(10000)
-
             final_url = page.url
-            logger.info(f"Capturing screenshot (full_page={full_page})")
-
-            # DOM 掩码（仅由 ip_mask_mode 控制）
             await mask_ip_in_page(page, ip_mask_mode)
-
             image_bytes = await page.screenshot(full_page=full_page)
-            logger.info(f"Screenshot captured, size={len(image_bytes)} bytes, final_url={mask_ip_in_text(final_url)}")
+            masked_final_url = await mask_ip_in_text(final_url)
+            logger.info("Screenshot captured, size=%s bytes, final_url=%s", len(image_bytes), masked_final_url)
             return image_bytes, final_url
-
         finally:
             await context.close()
             await browser.close()
+
 
 async def capture_screenshot(
     url: str,
