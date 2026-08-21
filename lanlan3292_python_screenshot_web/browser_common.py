@@ -10,7 +10,7 @@ from .public_ip import get_public_ip
 
 logger = logging.getLogger(__name__)
 
-ENABLE_IP_MASK = True
+ENABLE_IP_MASK = False
 IP_MASK_MODE = 1
 
 _IPV4_RE = re.compile(
